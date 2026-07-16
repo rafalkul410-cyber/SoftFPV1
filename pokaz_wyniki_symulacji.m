@@ -1,42 +1,43 @@
-function pokaz_wyniki_symulacji(czas_in, varargin)
-    % Ustalenie siatki (2 kolumny)
-    liczba_elementow = length(varargin);
-    kolumny = 2; 
-    if liczba_elementow == 1
-        kolumny = 1;
-    end
-    wiersze = ceil(liczba_elementow / kolumny);
-
-    % Wyciągnięcie wektora czasu ze struktury
-    czas = czas_in.signals.values;
+function pokaz_wyniki_symulacji(czas, varargin)
+    % Czas: wektor czasu (np. T)
+    % varargin: lista zmiennych (np. throttle_ref, pitch_ref, ...)
     
-    % Tworzenie czystego, białego okna
     figure('Color', 'w');
+    liczba_wykresow = length(varargin);
+    
+    kolumny = 2; 
+    wiersze = ceil(liczba_wykresow / kolumny);
 
-    % Rysowanie w pętli dla każdego przekazanego sygnału
-    for i = 1:liczba_elementow
+    for i = 1:liczba_wykresow
         subplot(wiersze, kolumny, i);
         
-        % Pobranie i-tego sygnału
-        sygnal = varargin{i};
-        dane_y = sygnal.signals.values;
+        dane = varargin{i};
+        % Wyciągamy czystą nazwę zmiennej, którą wpisałeś w nawiasie
+        nazwa = inputname(i+1); 
         
-        % Rysowanie linii
-        plot(czas, dane_y, 'LineWidth', 1.2);
+        % Rysowanie (obsługa formatów Simulinka)
+        plot(czas, bezpiecznie_pobierz(dane), 'LineWidth', 1.2);
         
-        % Stylizacja
         grid on;
         xlabel('t [s]');
         
-        % Podpisanie osi Y automatycznie na podstawie nazwy wpisanej w komendzie
-        nazwa_zmiennej = inputname(i+1); 
-        if ~isempty(nazwa_zmiennej)
-            podzial = split(nazwa_zmiennej, '.');
-            nazwa_zmiennej = podzial{end};
-            nazwa_zmiennej = strrep(nazwa_zmiennej, '_', '\_'); % Zabezpieczenie przed znakiem podkreślenia
-            ylabel(nazwa_zmiennej);
+        % Ustawienie opisu osi Y (bez jednostek, z obsługą podkreślników)
+        if ~isempty(nazwa)
+            ylabel(strrep(nazwa, '_', '\_'));
         else
-            ylabel(sprintf('Sygnał %d', i));
+            ylabel(['Sygnał ', num2str(i)]);
         end
     end
+end
+
+function dane = bezpiecznie_pobierz(wejscie)
+    % Sprawdza czy to timeseries, struct czy zwykła tablica
+    if isa(wejscie, 'timeseries')
+        dane = wejscie.Data;
+    elseif isstruct(wejscie) && isfield(wejscie, 'signals')
+        dane = wejscie.signals.values;
+    else
+        dane = wejscie;
+    end
+    dane = squeeze(double(dane));
 end
