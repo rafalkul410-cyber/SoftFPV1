@@ -14,6 +14,7 @@ takeoffgain=1.2;
 MaxThrustSaturation=16.0;%% w newtonach max 4 silników TĄ WAROŚĆ TRZEBA WYZNACZYĆ
 
 Q2Ts = forcetomotors();
+inp_gain=1; %wzmocinć jeśli nie reaguje na przepustnicę 
 
 % Rotor Dynamics  do pliku %%
 
@@ -24,3 +25,4 @@ Vehicle.Rotor.Ct=0.085;
 Vehicle.Rotor.radius=0.0635;
 Vehicle.Rotor.area=0.01267;
 Vehicle.Rotor.Cq=0.007;
+ 
