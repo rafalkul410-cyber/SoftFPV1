@@ -1,0 +1,1 @@
+Soft do drona fpv na bazie nucleo STM oraz steorwnia za pomocą MBD 
