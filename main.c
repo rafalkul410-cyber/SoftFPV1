@@ -64,7 +64,8 @@ volatile uint8_t diag_scanner_count = 0;
 
 // Struktury danych
 LoRa_ControlPacket_t rx_packet;
-Sensors_Data_t g_sensor_data;
+
+static uint8_t bme_divider = 20;
 
 uint16_t value = 0;			            // throttle value to be sent
 uint16_t ctr = 0;						// arming sequence counter
@@ -231,7 +232,6 @@ int main(void)
   MX_I2C1_Init();
   MX_TIM1_Init();
   MX_TIM2_Init();
-  MX_USART1_UART_Init();
   MX_TIM6_Init();
   MX_USART2_UART_Init();
   MX_SPI1_Init();
@@ -286,7 +286,7 @@ int main(void)
     // 3. Inicjalizacja modelu Simulink
     FCS_initialize();
 
-    // 4. Konfiguracja sprzętowa TIM1 (Main Output Enable dla kanałów komplementarnych/zaawansowanych)
+/*    // 4. Konfiguracja sprzętowa TIM1 (Main Output Enable dla kanałów komplementarnych/zaawansowanych)
     __HAL_TIM_MOE_ENABLE(&htim1);
 
     // 5. Wstępne wyczyszczenie buforów DShot (wartość 0)
@@ -299,7 +299,7 @@ int main(void)
     for (int i = 0; i < 50; i++) {
         send_dshot_motors(0, 0, 0, 0);
         HAL_Delay(5);
-    }
+    }*/
 
     // 7. Start timera głównej pętli 200 Hz (5 ms)
     HAL_TIM_Base_Start_IT(&htim6);
@@ -309,7 +309,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
     while (1)
       {
-        if (flag_process_5ms)
+       /* if (flag_process_5ms)
         {
             flag_process_5ms = 0; // Czyszczenie flagi cyklu 200 Hz
             counter++;
@@ -319,11 +319,16 @@ int main(void)
             {
                 LoRa_Process(&rx_packet);
             }
+*/
+            // 2. Odczyt czujników I2C
+            MPU6050_Read(&hi2c1, &g_sensors_data);
 
-            // 2. Odczyt czujników I2C (magistrala wolna, brak DMA w tle)
-            Sensors_Read(&hi2c1, &g_sensor_data);
-
-            // 3. NADRZĘDNY KILL SWITCH (Blokada bezpieczeństwa)
+                    // 3. Wolny odczyt barometru (10 Hz) - co 10 cykli
+                    if (++bme_divider >= 20) {
+                        bme_divider = 0;
+                        BME280_Read(&hi2c1, &g_sensors_data);
+                    }
+    /*        // 3. NADRZĘDNY KILL SWITCH (Blokada bezpieczeństwa)
                     if (rx_packet.killswitch == 1 || !lora_hardware_ok)
                     {
                         // Twarde odcięcie wyjść do silników
@@ -414,7 +419,7 @@ int main(void)
             // 6. Obsługa buzzera
             //FCS_APP_BuzzerUpdate();
         }
-      }
+      }*/
       }
 
     /* USER CODE END WHILE */
