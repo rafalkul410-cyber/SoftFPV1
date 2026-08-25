@@ -66,17 +66,15 @@ volatile uint8_t diag_scanner_count = 0;
 LoRa_ControlPacket_t rx_packet;
 Sensors_Data_t g_sensor_data;
 
-
-//////////////////// DSHOT GIT////////////
-uint16_t value = 0;			// throttle value to be sent
+uint16_t value = 0;			            // throttle value to be sent
 uint16_t ctr = 0;						// arming sequence counter
 uint8_t trottle_down=0;					// dunnot change trottle up.
 uint8_t armed = 0;
 uint32_t motor[DSHOT_FRAME_SIZE];		// duty cycles array
 
-static uint32_t motor1[DSHOT_FRAME_SIZE];
-static uint32_t motor2[DSHOT_FRAME_SIZE];
-static uint32_t motor3[DSHOT_FRAME_SIZE];
+static uint16_t motor1[DSHOT_FRAME_SIZE]; // TIM1 - 16BIT
+static uint16_t motor2[DSHOT_FRAME_SIZE];
+static uint32_t motor3[DSHOT_FRAME_SIZE]; //TIM2 - 32BIT
 static uint32_t motor4[DSHOT_FRAME_SIZE];
 
 /* USER CODE END PV */
@@ -84,42 +82,47 @@ static uint32_t motor4[DSHOT_FRAME_SIZE];
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-void dshot600(uint32_t *motor, uint16_t value);
+void dshot_encode_16(uint16_t *motor, uint16_t value);
+void dshot_encode_32(uint32_t *motor, uint16_t value);
+void send_dshot_motors(uint16_t m1, uint16_t m2, uint16_t m3, uint16_t m4);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void dshot600(uint32_t *motor, uint16_t value)
-{
-    if (value > 2047) value = 2047;
+// Kodowanie dla TIM2 (32-bit)
+void dshot_encode_16(uint16_t *buf, uint16_t val) {
+    if (val > 2047) val = 2047;
+    uint16_t packet = (val << 1);
+    uint16_t csum = 0, csum_data = packet;
+    for (int i = 0; i < 3; i++) { csum ^= csum_data; csum_data >>= 4; }
+    packet = (packet << 4) | (csum & 0x0F);
 
-    uint16_t packet = (value << 1);
-
-    // DShot CRC
-    uint16_t csum = 0;
-    uint16_t csum_data = packet;
-    for (int i = 0; i < 3; i++) {
-        csum ^= csum_data;
-        csum_data >>= 4;
-    }
-    csum &= 0x0F;
-    packet = (packet << 4) | csum;
-
-    // Kodowanie 16 bitów
     for (int i = 0; i < 16; i++) {
-    	motor[i] = (packet & 0x8000) ? 200 : 100;
+        buf[i] = (packet & 0x8000) ? 200 : 100;
         packet <<= 1;
     }
-
-    // Pozostałe słowa jako stan niski (wymagany reset linii > 20 us)
-    for (int i = 16; i < DSHOT_FRAME_SIZE; i++) {
-        motor[i] = 0;
-    }
+    for (int i = 16; i < DSHOT_FRAME_SIZE; i++) buf[i] = 0;
 }
 
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+// Kodowanie dla TIM2 (32-bit)
+void dshot_encode_32(uint32_t *buf, uint16_t val) {
+    if (val > 2047) val = 2047;
+    uint16_t packet = (val << 1);
+    uint16_t csum = 0, csum_data = packet;
+    for (int i = 0; i < 3; i++) { csum ^= csum_data; csum_data >>= 4; }
+    packet = (packet << 4) | (csum & 0x0F);
+
+    for (int i = 0; i < 16; i++) {
+        buf[i] = (packet & 0x8000) ? 200 : 100;
+        packet <<= 1;
+    }
+    for (int i = 16; i < DSHOT_FRAME_SIZE; i++) buf[i] = 0;
+}
+
+/*void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
   if (htim->Instance == TIM6) {
 
+	  flag_process_5ms = 1;
       // 1. Faza uzbrajania (wysyłanie zera)
       if (ctr < ESC_POWER_UP) {
         ++ctr;
@@ -134,8 +137,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
         ++ctr;
         if (!trottle_down) {
           ++value;
-          if (value >= TROTTLE_MAX) {
-            value = TROTTLE_MAX;
+          if (value >= TROTTLE_MAX/2) {
+            value = TROTTLE_MAX/2;  // devide by 2 for less motor pick for tests
             trottle_down = 1;
           }
         } else {
@@ -146,13 +149,26 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
           }
         }
       }
+      	  	// TIM1
+      	  	dshot_encode_16(motor1, value);
+      	  	dshot_encode_16(motor2, value);
+            // TIM2
+            dshot_encode_32(motor3, value);
+            dshot_encode_32(motor4, value);
+  	}
+  }*/
+void send_dshot_motors(uint16_t m1, uint16_t m2, uint16_t m3, uint16_t m4) {
+    dshot_encode_16(motor1, m1);
+    dshot_encode_16(motor2, m2);
+    dshot_encode_32(motor3, m3);
+    dshot_encode_32(motor4, m4);
 
-      // Pojedyncze wysłanie wyliczonej wartości na koniec każdego cyklu
-      dshot600(motor1, value);
-      dshot600(motor2, value);
-      dshot600(motor3, value);
-      dshot600(motor4, value);
-  }
+    HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_1, (uint32_t*)motor1, DSHOT_FRAME_SIZE);
+    HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_4, (uint32_t*)motor2, DSHOT_FRAME_SIZE);
+    HAL_TIM_PWM_Start_DMA(&htim2, TIM_CHANNEL_1, (uint32_t*)motor3, DSHOT_FRAME_SIZE);
+    HAL_TIM_PWM_Start_DMA(&htim2, TIM_CHANNEL_2, (uint32_t*)motor4, DSHOT_FRAME_SIZE);
+}
+
 
 /*void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
   if (htim->Instance == TIM6) {
@@ -221,54 +237,81 @@ int main(void)
   MX_SPI1_Init();
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
-  lora_hardware_ok = LoRa_Init();
+  /*lora_hardware_ok = LoRa_Init();
 
     // 2. Inicjalizacja i kalibracja czujników I2C
     Sensors_Init(&hi2c1);
 
     // 3. Inicjalizacja wyjść DShot
-    FCS_APP_Init();
+    //FCS_APP_Init();
 
     // 4. Inicjalizacja modelu Simulink / FCS
     FCS_initialize();
 
-    // 5. Sekwencja uzbrajania ESC (wysyłanie zera przez 1,5 sekundy przed startem pętli)
-    for (int i = 0; i < 300; i++) {
-        rtY.FCSb[0] = 0.0f;
-        rtY.FCSb[1] = 0.0f;
-        rtY.FCSb[2] = 0.0f;
-        rtY.FCSb[3] = 0.0f;
-        FCS_APP_SetMotors();
-        HAL_Delay(5);
-    }
+    // 5. Sekwencja uzbrajania ESC
 
-    dshot600(motor1, 0);
-    dshot600(motor2, 0);
-    dshot600(motor3, 0);
-    dshot600(motor4, 0);
+    dshot_encode_16(motor1, 0);
+    dshot_encode_16(motor2, 0);
+    dshot_encode_32(motor3, 0);
+    dshot_encode_32(motor4, 0);
 
-    __HAL_TIM_MOE_ENABLE(&htim1);
+        // Start Motor 1 (PA8 - TIM1_CH1)
+        HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_1, (uint32_t*)motor1, DSHOT_FRAME_SIZE);//1
+        // Start Motor 2 (PA11 - TIM1_CH4)
+        HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_4, (uint32_t*)motor2, DSHOT_FRAME_SIZE);//4
+        // Start Motor 3 (PA0 - TIM2_CH1)
+        HAL_TIM_PWM_Start_DMA(&htim2, TIM_CHANNEL_1, (uint32_t*)motor3, DSHOT_FRAME_SIZE);//1
+        // Start Motor 4 (PA1 - TIM2_CH2)
+        HAL_TIM_PWM_Start_DMA(&htim2, TIM_CHANNEL_2, (uint32_t*)motor4, DSHOT_FRAME_SIZE);//2
 
-    HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_1, motor1, DSHOT_FRAME_SIZE);
-      HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_4, motor2, DSHOT_FRAME_SIZE);
-      HAL_TIM_PWM_Start_DMA(&htim2, TIM_CHANNEL_1, motor3, DSHOT_FRAME_SIZE);
-      HAL_TIM_PWM_Start_DMA(&htim2, TIM_CHANNEL_2, motor4, DSHOT_FRAME_SIZE);
+        __HAL_TIM_MOE_ENABLE(&htim1);
 
-      HAL_Delay(2000);
+        // Wyłączenie przerwań w kanałach DMA (zapobiega wejściu HAL w błąd TE/ErrorCode=4)
+        __HAL_DMA_DISABLE_IT(htim1.hdma[TIM_DMA_ID_CC1], DMA_IT_TC | DMA_IT_HT | DMA_IT_TE);
+        __HAL_DMA_DISABLE_IT(htim1.hdma[TIM_DMA_ID_CC4], DMA_IT_TC | DMA_IT_HT | DMA_IT_TE);
+        __HAL_DMA_DISABLE_IT(htim2.hdma[TIM_DMA_ID_CC1], DMA_IT_TC | DMA_IT_HT | DMA_IT_TE);
+        __HAL_DMA_DISABLE_IT(htim2.hdma[TIM_DMA_ID_CC2], DMA_IT_TC | DMA_IT_HT | DMA_IT_TE);
+
+   HAL_Delay(2000);
 
     // 6. START TIMERA 200 Hz DOPIERO PO ZAKOŃCZENIU UZBROJENIA
     HAL_TIM_Base_Start_IT(&htim6);
+*/
+  // 1. Inicjalizacja modułu LoRa
+    lora_hardware_ok = LoRa_Init();
 
+    // 2. Inicjalizacja i kalibracja czujników I2C (magistrala w 100% czysta)
+    Sensors_Init(&hi2c1);
 
+    // 3. Inicjalizacja modelu Simulink
+    FCS_initialize();
+
+    // 4. Konfiguracja sprzętowa TIM1 (Main Output Enable dla kanałów komplementarnych/zaawansowanych)
+    __HAL_TIM_MOE_ENABLE(&htim1);
+
+    // 5. Wstępne wyczyszczenie buforów DShot (wartość 0)
+    dshot_encode_16(motor1, 0);
+    dshot_encode_16(motor2, 0);
+    dshot_encode_32(motor3, 0);
+    dshot_encode_32(motor4, 0);
+
+    // 6. Sekwencja uzbrojenia ESC (wysyłanie zer przez send_dshot_motors)
+    for (int i = 0; i < 50; i++) {
+        send_dshot_motors(0, 0, 0, 0);
+        HAL_Delay(5);
+    }
+
+    // 7. Start timera głównej pętli 200 Hz (5 ms)
+    HAL_TIM_Base_Start_IT(&htim6);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {
-      /*  if (flag_process_5ms)
+    while (1)
+      {
+        if (flag_process_5ms)
         {
-            flag_process_5ms = 0; // Czyszczenie flagi cyklu 5 ms (200 Hz)
+            flag_process_5ms = 0; // Czyszczenie flagi cyklu 200 Hz
             counter++;
 
             // 1. Odbiór radiowy LoRa
@@ -277,41 +320,102 @@ int main(void)
                 LoRa_Process(&rx_packet);
             }
 
-            // 2. Odczyt czujników (odkomentuj, gdy podłączysz I2C)
-            // Sensors_Read(&hi2c1, &g_sensor_data);
+            // 2. Odczyt czujników I2C (magistrala wolna, brak DMA w tle)
+            Sensors_Read(&hi2c1, &g_sensor_data);
 
-            // 3. Aktualizacja wejść Simulinka z sensorów i radia
+            // 3. NADRZĘDNY KILL SWITCH (Blokada bezpieczeństwa)
+                    if (rx_packet.killswitch == 1 || !lora_hardware_ok)
+                    {
+                        // Twarde odcięcie wyjść do silników
+                        send_dshot_motors(0, 0, 0, 0);
+
+                        // Wyzerowanie wyjść modelu FCS
+                        rtY.FCSb[0] = 0.0f;
+                        rtY.FCSb[1] = 0.0f;
+                        rtY.FCSb[2] = 0.0f;
+                        rtY.FCSb[3] = 0.0f;
+
+                        // Reset całek i stanów regulatora w locie
+                        FCS_initialize();
+
+                        // Sygnalizacja dźwiękowa / LED
+                        // FCS_APP_SetBuzzerMode(BUZZER_FAILSAFE);
+                    }
+                    else
+                    {
+
+            // 3. Aktualizacja wejść Simulinka i krok modelu
             FCS_APP_Task();
+            FCS_step();
 
-            // 4. Logika bezpieczeństwa i zadawanie mocy
-            if (rx_packet.killswitch == 1)
+            // 4. FAZA TESTOWA: Rampa gazu na starcie
+            if (!armed)
             {
-                // Silniki wyłączone (Disarmed)
-                rtY.FCSb[0] = 0.0f;
-                rtY.FCSb[1] = 0.0f;
-                rtY.FCSb[2] = 0.0f;
-                rtY.FCSb[3] = 0.0f;
-                FCS_APP_SetBuzzerMode(BUZZER_FAILSAFE);
+                // Faza 1: Uzbrajanie (wysyłanie zera)
+                if (ctr < ESC_POWER_UP)
+                {
+                    ++ctr;
+                    value = 0;
+                }
+                // Faza 2: Rampa testowa góra / dół
+                else
+                {
+                    ++ctr;
+                    if (!trottle_down)
+                    {
+                        ++value;
+                        if (value >= TROTTLE_MAX / 2)
+                        {
+                            value = TROTTLE_MAX / 2; // Bezpieczny limit 50%
+                            trottle_down = 1;
+                        }
+                    }
+                    else
+                    {
+                        --value;
+                        if (value <= TROTTLE_MIN)
+                        {
+                            value = TROTTLE_MIN;
+                            armed = 1; // Koniec rampy -> przejście do sterowania docelowego
+                        }
+                    }
+                }
+
+                // Wystawienie wartości z rampy na wszystkie 4 silniki
+                send_dshot_motors(value, value, value, value);
             }
+            // 5. FAZA DOCELOWA: Po zakończeniu rampy steruje Simulink / Killswitch
             else
             {
-                // FCS_step(); // Docelowy krok modelu Simulinka
+                uint16_t m1_val, m2_val, m3_val, m4_val;
 
-                // TESTOWY GAZ: Wartość od 0.0f do 1.0f (0.05f to bezpieczne 5% obrotów biegu jałowego)
-                rtY.FCSb[0] = 0.05f;
-                rtY.FCSb[1] = 0.05f;
-                rtY.FCSb[2] = 0.05f;
-                rtY.FCSb[3] = 0.05f;
-                FCS_APP_SetBuzzerMode(BUZZER_ARMED);
+                if (rx_packet.killswitch == 1)
+                {
+                    // Awaryjne wyłączenie (Failsafe)
+                    m1_val = 0;
+                    m2_val = 0;
+                    m3_val = 0;
+                    m4_val = 0;
+                    //FCS_APP_SetBuzzerMode(BUZZER_FAILSAFE);
+                }
+                else
+                {
+                    // Gaz roboczy z Simulinka (skalowanie z 0.0f..1.0f na DShot 0..2047)
+                    m1_val = (uint16_t)(rtY.FCSb[0] * 2047.0f);
+                    m2_val = (uint16_t)(rtY.FCSb[1] * 2047.0f);
+                    m3_val = (uint16_t)(rtY.FCSb[2] * 2047.0f);
+                    m4_val = (uint16_t)(rtY.FCSb[3] * 2047.0f);
+                    // FCS_APP_SetBuzzerMode(BUZZER_ARMED);
+                }
+
+                send_dshot_motors(m1_val, m2_val, m3_val, m4_val);
             }
 
-            // 5. Wystawienie ramek DShot do ESC
-            FCS_APP_SetMotors();
-
             // 6. Obsługa buzzera
-            FCS_APP_BuzzerUpdate();
-        }*/
-    }
+            //FCS_APP_BuzzerUpdate();
+        }
+      }
+      }
 
     /* USER CODE END WHILE */
 
@@ -371,7 +475,7 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
-/*void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim->Instance == TIM6)
     {
@@ -379,13 +483,12 @@ void SystemClock_Config(void)
     }
 }
 
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+/*void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
     if (GPIO_Pin == GPIO_PIN_12)
     {
         lora_frame_ready = 1;
     }*/
-
 /* USER CODE END 4 */
 
 /**
