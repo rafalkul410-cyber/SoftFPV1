@@ -7,6 +7,7 @@ typedef struct __attribute__((packed)) {
     int16_t  roll;       // Przechylenie (-500 do 500)
     int16_t  yaw;        // Odchylenie (-500 do 500)
     int8_t   kill;       // 0 = OFF, 1 = AKTYWNY
+    int8_t   Mode;        // 0 = OFF, 1 = AKTYWNY  
     uint8_t  checksum;   // Suma kontrolna XOR
 } LoRa_ControlPacket_t;
 
@@ -47,25 +48,39 @@ uint8_t calculateChecksum(const LoRa_ControlPacket_t* packet) {
     return crc;
 }
 
-int skalujOs(int raw, int raw_min, int raw_srodek, int raw_max, int deadband = 40) {
-    raw = constrain(raw, raw_min, raw_max);
-    if (abs(raw - raw_srodek) <= deadband) return 0;
+// int skalujOs(int raw, int raw_min, int raw_srodek, int raw_max, int deadband = 40) {
+//     raw = constrain(raw, raw_min, raw_max);
+//     if (abs(raw - raw_srodek) <= deadband) return 0;
 
-    if (raw < raw_srodek) {
-        return map(raw, raw_min, raw_srodek - deadband, -500, 0);
-    } else {
-        return map(raw, raw_srodek + deadband, raw_max, 0, 500);
+//     if (raw < raw_srodek) {
+//         return map(raw, raw_min, raw_srodek - deadband, -500, 0);
+//     } else {
+//         return map(raw, raw_srodek + deadband, raw_max, 0, 500);
+//     }
+// }
+
+// int skalujThrottle(int raw, int raw_min, int raw_srodek, int raw_max, int deadband = 40) {
+//     raw = constrain(raw, raw_min, raw_max);
+//     if (abs(raw - raw_srodek) <= deadband) return 500;
+
+//     if (raw < raw_srodek) {
+//         return map(raw, raw_min, raw_srodek - deadband, 0, 500);
+//     } else {
+//         return map(raw, raw_srodek + deadband, raw_max, 500, 1000);
+//     }
+// }
+int skalujOsDo100(int raw, int raw_min, int raw_srodek, int raw_max, int deadband = 50) {
+    raw = constrain(raw, raw_min, raw_max);
+    
+    // Martwa strefa wokół środka drążka zwraca idealne 0
+    if (abs(raw - raw_srodek) <= deadband) {
+        return 0;
     }
-}
-
-int skalujThrottle(int raw, int raw_min, int raw_srodek, int raw_max, int deadband = 40) {
-    raw = constrain(raw, raw_min, raw_max);
-    if (abs(raw - raw_srodek) <= deadband) return 500;
 
     if (raw < raw_srodek) {
-        return map(raw, raw_min, raw_srodek - deadband, 0, 500);
+        return map(raw, raw_min, raw_srodek - deadband, -100, 0);
     } else {
-        return map(raw, raw_srodek + deadband, raw_max, 500, 1000);
+        return map(raw, raw_srodek + deadband, raw_max, 0, 100);
     }
 }
 
@@ -100,29 +115,50 @@ void setup() {
 }
 
 void loop() {
-    int vrx_1 = analogRead(PIN_VRX_1); // Throttle
-    int vry_1 = analogRead(PIN_VRY_1); // Yaw
-    int vrx_2 = analogRead(PIN_VRX_2); // Pitch
-    int vry_2 = analogRead(PIN_VRY_2); // Roll
+    // 1. Odczyt surowych wartości ADC
+    int raw_thr   = analogRead(PIN_VRX_1);
+    int raw_yaw   = analogRead(PIN_VRY_1);
+    int raw_pitch = analogRead(PIN_VRX_2);
+    int raw_roll  = analogRead(PIN_VRY_2);
 
     int ks = (digitalRead(PIN_KS) == LOW) ? 1 : 0;
 
-    LoRa_ControlPacket_t packet;
+    // 2. Przeliczenie wszystkich osi na zakres [-100, 100] z zerem na środku
+    int val_thr   = skalujOsDo100(raw_thr,   0, MID_THR,   4095, 50);
+    int val_yaw   = skalujOsDo100(raw_yaw,   0, MID_YAW,   4095, 50);
+    int val_pitch = skalujOsDo100(raw_pitch, 0, MID_PITCH, 4095, 50);
+    int val_roll  = skalujOsDo100(raw_roll,  0, MID_ROLL,  4095, 50);
 
-    packet.throttle = constrain(skalujThrottle(vrx_1, 0, MID_THR, 4095, 40), 0, 1000);
-    packet.pitch    = constrain(skalujOs(vrx_2, 0, MID_PITCH, 4095, 40), -500, 500);
-    packet.roll     = constrain(skalujOs(vry_2, 0, MID_ROLL,  4095, 40), -500, 500);
-    packet.yaw      = constrain(skalujOs(vry_1, 0, MID_YAW,   4095, 40), -500, 500);
+    // 3. Automatyczne wykrywanie trybu Mode:
+    // Jeśli wszystkie 4 osie są w strefie martwej (równe 0), załącz Mode = 1 (Zwis)
+    int Mode = 0;
+      if(val_thr < 3.0 && val_thr > -3.0){
+        if(val_pitch < 3.0 && val_pitch > -3.0){
+            if(val_roll < 3.0 && val_roll > -3.0){
+                Mode=1;
+            }
+        }
+    }
+    else {
+        Mode = 0;
+    }
+    // 4. Pakowanie danych
+    LoRa_ControlPacket_t packet;
+    packet.throttle = val_thr;
+    packet.pitch    = val_pitch;
+    packet.roll     = val_roll;
+    packet.yaw      = val_yaw;
     packet.kill     = ks;
+    packet.Mode     = Mode;
     packet.checksum = calculateChecksum(&packet);
 
-    // Wysyłanie binarne
+    // 5. Transmisja LoRa
     LoRa.beginPacket();
     LoRa.write((uint8_t*)&packet, sizeof(LoRa_ControlPacket_t));
     LoRa.endPacket();
 
-    Serial.printf("Wyslano -> Thr: %4d | Yaw: %4d | Pitch: %4d | Roll: %4d | Kill: %d | CRC: 0x%02X\n",
-                  packet.throttle, packet.yaw, packet.pitch, packet.roll, packet.kill, packet.checksum);
+    Serial.printf("Wyslano -> Thr: %4d | Yaw: %4d | Pitch: %4d | Roll: %4d | Kill: %d | Mode: %d | CRC: 0x%02X\n",
+                  packet.throttle, packet.yaw, packet.pitch, packet.roll, packet.kill, packet.Mode, packet.checksum);
 
     delay(50); // 20 Hz
 }
