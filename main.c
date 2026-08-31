@@ -237,20 +237,20 @@ int main(void)
   MX_SPI1_Init();
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
-  /*lora_hardware_ok = LoRa_Init();
+
 
     // 2. Inicjalizacja i kalibracja czujników I2C
-    Sensors_Init(&hi2c1);
+    //Sensors_Init(&hi2c1);
 
     // 3. Inicjalizacja wyjść DShot
     //FCS_APP_Init();
 
     // 4. Inicjalizacja modelu Simulink / FCS
-    FCS_initialize();
+    //FCS_initialize();
 
     // 5. Sekwencja uzbrajania ESC
 
-    dshot_encode_16(motor1, 0);
+   /* dshot_encode_16(motor1, 0);
     dshot_encode_16(motor2, 0);
     dshot_encode_32(motor3, 0);
     dshot_encode_32(motor4, 0);
@@ -277,17 +277,13 @@ int main(void)
     // 6. START TIMERA 200 Hz DOPIERO PO ZAKOŃCZENIU UZBROJENIA
     HAL_TIM_Base_Start_IT(&htim6);
 */
-  // 1. Inicjalizacja modułu LoRa
-    lora_hardware_ok = LoRa_Init();
 
-    // 2. Inicjalizacja i kalibracja czujników I2C (magistrala w 100% czysta)
+    //lora_hardware_ok = LoRa_Init();
     Sensors_Init(&hi2c1);
-
-    // 3. Inicjalizacja modelu Simulink
+   // FCS_APP_Init();
     FCS_initialize();
 
-/*    // 4. Konfiguracja sprzętowa TIM1 (Main Output Enable dla kanałów komplementarnych/zaawansowanych)
-    __HAL_TIM_MOE_ENABLE(&htim1);
+  // 4. Konfiguracja sprzętowa TIM1 (Main Output Enable dla kanałów komplementarnych/zaawansowanych)    __HAL_TIM_MOE_ENABLE(&htim1);
 
     // 5. Wstępne wyczyszczenie buforów DShot (wartość 0)
     dshot_encode_16(motor1, 0);
@@ -296,40 +292,42 @@ int main(void)
     dshot_encode_32(motor4, 0);
 
     // 6. Sekwencja uzbrojenia ESC (wysyłanie zer przez send_dshot_motors)
-    for (int i = 0; i < 50; i++) {
+  for (int i = 0; i < 50; i++) {
         send_dshot_motors(0, 0, 0, 0);
         HAL_Delay(5);
-    }*/
+  }
+
+            HAL_TIM_PWM_Stop_DMA(&htim1, TIM_CHANNEL_1);
+            HAL_TIM_PWM_Stop_DMA(&htim1, TIM_CHANNEL_4);
+            HAL_TIM_PWM_Stop_DMA(&htim2, TIM_CHANNEL_1);
+            HAL_TIM_PWM_Stop_DMA(&htim2, TIM_CHANNEL_2);
 
     // 7. Start timera głównej pętli 200 Hz (5 ms)
-    HAL_TIM_Base_Start_IT(&htim6);
+   HAL_TIM_Base_Start_IT(&htim6);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
     while (1)
       {
-       /* if (flag_process_5ms)
+       if (flag_process_5ms)
         {
-            flag_process_5ms = 0; // Czyszczenie flagi cyklu 200 Hz
-            counter++;
 
+               flag_process_5ms = 0; // Czyszczenie flagi cyklu 200 Hz
+            counter++;
+            //App_StateMachine();
             // 1. Odbiór radiowy LoRa
-            if (lora_hardware_ok)
+          /*  if (lora_hardware_ok)
             {
                 LoRa_Process(&rx_packet);
-            }
-*/
-            // 2. Odczyt czujników I2C
-            MPU6050_Read(&hi2c1, &g_sensors_data);
+            }*/
 
-                    // 3. Wolny odczyt barometru (10 Hz) - co 10 cykli
-                    if (++bme_divider >= 20) {
-                        bme_divider = 0;
-                        BME280_Read(&hi2c1, &g_sensors_data);
-                    }
-    /*        // 3. NADRZĘDNY KILL SWITCH (Blokada bezpieczeństwa)
-                    if (rx_packet.killswitch == 1 || !lora_hardware_ok)
+            // 2. Odczyt czujników I2
+            //Sensors_Read(&hi2c1, &g_sensors_data);
+            Sensors_TriggerRead_DMA(&hi2c1);
+
+          // 3. NADRZĘDNY KILL SWITCH (Blokada bezpieczeństwa)
+                    if (rx_packet.killswitch == 1 || lora_hardware_ok) // ma być !lora_kardewere_ok ale nie działa lora
                     {
                         // Twarde odcięcie wyjść do silników
                         send_dshot_motors(0, 0, 0, 0);
@@ -350,6 +348,7 @@ int main(void)
                     {
 
             // 3. Aktualizacja wejść Simulinka i krok modelu
+
             FCS_APP_Task();
             FCS_step();
 
@@ -419,7 +418,7 @@ int main(void)
             // 6. Obsługa buzzera
             //FCS_APP_BuzzerUpdate();
         }
-      }*/
+      }
       }
 
     /* USER CODE END WHILE */
