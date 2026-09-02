@@ -237,49 +237,10 @@ int main(void)
   MX_SPI1_Init();
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
-
-
-    // 2. Inicjalizacja i kalibracja czujników I2C
-    //Sensors_Init(&hi2c1);
-
-    // 3. Inicjalizacja wyjść DShot
-    //FCS_APP_Init();
-
-    // 4. Inicjalizacja modelu Simulink / FCS
-    //FCS_initialize();
-
-    // 5. Sekwencja uzbrajania ESC
-
-   /* dshot_encode_16(motor1, 0);
-    dshot_encode_16(motor2, 0);
-    dshot_encode_32(motor3, 0);
-    dshot_encode_32(motor4, 0);
-
-        // Start Motor 1 (PA8 - TIM1_CH1)
-        HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_1, (uint32_t*)motor1, DSHOT_FRAME_SIZE);//1
-        // Start Motor 2 (PA11 - TIM1_CH4)
-        HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_4, (uint32_t*)motor2, DSHOT_FRAME_SIZE);//4
-        // Start Motor 3 (PA0 - TIM2_CH1)
-        HAL_TIM_PWM_Start_DMA(&htim2, TIM_CHANNEL_1, (uint32_t*)motor3, DSHOT_FRAME_SIZE);//1
-        // Start Motor 4 (PA1 - TIM2_CH2)
-        HAL_TIM_PWM_Start_DMA(&htim2, TIM_CHANNEL_2, (uint32_t*)motor4, DSHOT_FRAME_SIZE);//2
-
-        __HAL_TIM_MOE_ENABLE(&htim1);
-
-        // Wyłączenie przerwań w kanałach DMA (zapobiega wejściu HAL w błąd TE/ErrorCode=4)
-        __HAL_DMA_DISABLE_IT(htim1.hdma[TIM_DMA_ID_CC1], DMA_IT_TC | DMA_IT_HT | DMA_IT_TE);
-        __HAL_DMA_DISABLE_IT(htim1.hdma[TIM_DMA_ID_CC4], DMA_IT_TC | DMA_IT_HT | DMA_IT_TE);
-        __HAL_DMA_DISABLE_IT(htim2.hdma[TIM_DMA_ID_CC1], DMA_IT_TC | DMA_IT_HT | DMA_IT_TE);
-        __HAL_DMA_DISABLE_IT(htim2.hdma[TIM_DMA_ID_CC2], DMA_IT_TC | DMA_IT_HT | DMA_IT_TE);
-
-   HAL_Delay(2000);
-
-    // 6. START TIMERA 200 Hz DOPIERO PO ZAKOŃCZENIU UZBROJENIA
-    HAL_TIM_Base_Start_IT(&htim6);
-*/
-
-    //lora_hardware_ok = LoRa_Init();
-    Sensors_Init(&hi2c1);
+  /*  //lora_hardware_ok = LoRa_Init();
+  if (Sensors_Init(&hi2c1) != 0) {
+          // Błąd inicjalizacji czujników - można dodać sygnalizację diodą LED
+      }
    // FCS_APP_Init();
     FCS_initialize();
 
@@ -303,123 +264,84 @@ int main(void)
             HAL_TIM_PWM_Stop_DMA(&htim2, TIM_CHANNEL_2);
 
     // 7. Start timera głównej pętli 200 Hz (5 ms)
-   HAL_TIM_Base_Start_IT(&htim6);
+   HAL_TIM_Base_Start_IT(&htim6);*/
+
+  if (Sensors_Init(&hi2c1) != 0) {
+        // Błąd komunikacji z czujnikami (opcjonalnie: dioda LED / pętla błędu)
+    }
+
+    // 2. Inicjalizacja modułu radiowego LoRa SX1278 po SPI
+    if (LoRa_Init() == 1) {
+        lora_hardware_ok = 1;
+    } else {
+        lora_hardware_ok = 0; // W razie błędu SPI dron pozostanie w bezpiecznym FAILSAFE
+    }
+
+    // 3. Inicjalizacja modelu Simulink (zerowanie stanów i zmiennych)
+    FCS_initialize();
+
+    // 4. Inicjalizacja wyjść DShot i start ciągłego generowania sygnału DMA Circular
+    FCS_APP_Init();
+
+    // 5. Wyłączenie zbędnych przerwań DMA od timerów DShot (zapobiega zapychaniu procesora)
+    __HAL_DMA_DISABLE_IT(htim1.hdma[TIM_DMA_ID_CC1], DMA_IT_TC | DMA_IT_HT | DMA_IT_TE);
+    __HAL_DMA_DISABLE_IT(htim1.hdma[TIM_DMA_ID_CC4], DMA_IT_TC | DMA_IT_HT | DMA_IT_TE);
+    __HAL_DMA_DISABLE_IT(htim2.hdma[TIM_DMA_ID_CC1], DMA_IT_TC | DMA_IT_HT | DMA_IT_TE);
+    __HAL_DMA_DISABLE_IT(htim2.hdma[TIM_DMA_ID_CC2], DMA_IT_TC | DMA_IT_HT | DMA_IT_TE);
+
+    dshot_encode_16(motor1, 0);
+    dshot_encode_16(motor2, 0);
+    dshot_encode_32(motor3, 0);
+    dshot_encode_32(motor4, 0);
+
+    // 6. Sekwencja uzbrojenia ESC (wysyłanie zer przez send_dshot_motors)
+  for (int i = 0; i < 50; i++) {
+        send_dshot_motors(0, 0, 0, 0);
+        HAL_Delay(5);
+  }
+
+    // 6. Start timera sprzętowego taktującego główną pętlę 200 Hz (5 ms)
+    HAL_TIM_Base_Start_IT(&htim6);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
     while (1)
-      {
-       if (flag_process_5ms)
-        {
-
-               flag_process_5ms = 0; // Czyszczenie flagi cyklu 200 Hz
-            counter++;
-            //App_StateMachine();
-            // 1. Odbiór radiowy LoRa
-          /*  if (lora_hardware_ok)
+    {
+            // =====================================================================
+            // ZADANIE 1: Nasłuch LoRa (w wolnym czasie procesora)
+            // =====================================================================
+            if (lora_hardware_ok)
             {
                 LoRa_Process(&rx_packet);
-            }*/
-
-            // 2. Odczyt czujników I2
-            //Sensors_Read(&hi2c1, &g_sensors_data);
-            Sensors_TriggerRead_DMA(&hi2c1);
-
-          // 3. NADRZĘDNY KILL SWITCH (Blokada bezpieczeństwa)
-                    if (rx_packet.killswitch == 1 || lora_hardware_ok) // ma być !lora_kardewere_ok ale nie działa lora
-                    {
-                        // Twarde odcięcie wyjść do silników
-                        send_dshot_motors(0, 0, 0, 0);
-
-                        // Wyzerowanie wyjść modelu FCS
-                        rtY.FCSb[0] = 0.0f;
-                        rtY.FCSb[1] = 0.0f;
-                        rtY.FCSb[2] = 0.0f;
-                        rtY.FCSb[3] = 0.0f;
-
-                        // Reset całek i stanów regulatora w locie
-                        FCS_initialize();
-
-                        // Sygnalizacja dźwiękowa / LED
-                        // FCS_APP_SetBuzzerMode(BUZZER_FAILSAFE);
-                    }
-                    else
-                    {
-
-            // 3. Aktualizacja wejść Simulinka i krok modelu
-
-            FCS_APP_Task();
-            FCS_step();
-
-            // 4. FAZA TESTOWA: Rampa gazu na starcie
-            if (!armed)
-            {
-                // Faza 1: Uzbrajanie (wysyłanie zera)
-                if (ctr < ESC_POWER_UP)
-                {
-                    ++ctr;
-                    value = 0;
-                }
-                // Faza 2: Rampa testowa góra / dół
-                else
-                {
-                    ++ctr;
-                    if (!trottle_down)
-                    {
-                        ++value;
-                        if (value >= TROTTLE_MAX / 2)
-                        {
-                            value = TROTTLE_MAX / 2; // Bezpieczny limit 50%
-                            trottle_down = 1;
-                        }
-                    }
-                    else
-                    {
-                        --value;
-                        if (value <= TROTTLE_MIN)
-                        {
-                            value = TROTTLE_MIN;
-                            armed = 1; // Koniec rampy -> przejście do sterowania docelowego
-                        }
-                    }
-                }
-
-                // Wystawienie wartości z rampy na wszystkie 4 silniki
-                send_dshot_motors(value, value, value, value);
-            }
-            // 5. FAZA DOCELOWA: Po zakończeniu rampy steruje Simulink / Killswitch
-            else
-            {
-                uint16_t m1_val, m2_val, m3_val, m4_val;
-
-                if (rx_packet.killswitch == 1)
-                {
-                    // Awaryjne wyłączenie (Failsafe)
-                    m1_val = 0;
-                    m2_val = 0;
-                    m3_val = 0;
-                    m4_val = 0;
-                    //FCS_APP_SetBuzzerMode(BUZZER_FAILSAFE);
-                }
-                else
-                {
-                    // Gaz roboczy z Simulinka (skalowanie z 0.0f..1.0f na DShot 0..2047)
-                    m1_val = (uint16_t)(rtY.FCSb[0] * 2047.0f);
-                    m2_val = (uint16_t)(rtY.FCSb[1] * 2047.0f);
-                    m3_val = (uint16_t)(rtY.FCSb[2] * 2047.0f);
-                    m4_val = (uint16_t)(rtY.FCSb[3] * 2047.0f);
-                    // FCS_APP_SetBuzzerMode(BUZZER_ARMED);
-                }
-
-                send_dshot_motors(m1_val, m2_val, m3_val, m4_val);
             }
 
-            // 6. Obsługa buzzera
-            //FCS_APP_BuzzerUpdate();
-        }
-      }
-      }
+            // =====================================================================
+            // ZADANIE 2: Ścisła pętla dynamiki i sterowania (Dokładnie 200 Hz / 5 ms)
+            // =====================================================================
+            if (flag_process_5ms)
+            {
+
+            	flag_process_5ms = 0; // Kasowanie flagi sprzętowej
+
+
+                // Rozdzielenie DMA I2C: 19 cykli MPU (190 Hz) i 1 cykl BME (10 Hz)
+                Sensors_TriggerMPU_DMA(&hi2c1);
+                bme_divider++;
+                if (bme_divider >= 20)
+                {
+                    Sensors_TriggerBME_DMA(&hi2c1);
+                    bme_divider = 0;
+                }
+
+
+                // Wykonanie maszyny stanów (rampa, bezpieczeństwo, krok Simulinka i wyjścia silników)
+              //  App_StateMachine();
+            	}
+
+    }
+
 
     /* USER CODE END WHILE */
 

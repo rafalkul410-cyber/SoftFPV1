@@ -2,77 +2,83 @@
 #include "sensors.h"
 #include "lora.h"
 #include "FCS.h"
-#include "i2c.h"
-#include "tim.h"
+#include "rtwtypes.h"
 #include <math.h>
 
-#define TROTTLE_MIN     48
-#define TROTTLE_MAX     2047
+//--- Uchwyty timerów i I2C ze środowiska STM32 ---
+extern TIM_HandleTypeDef htim1;
+extern TIM_HandleTypeDef htim2;
+extern I2C_HandleTypeDef hi2c1;
 
-//--- Zmienne zewnętrzne z czujników i radia ---
+//--- Zmienne zewnętrzne z sensorów i radia ---
 extern Sensors_Data_t g_sensors_data;
 extern LoRa_ControlPacket_t rx_packet;
 extern volatile uint8_t lora_hardware_ok;
-extern I2C_HandleTypeDef hi2c1;
 
-//--- Struktury wejść/wyjść Simulinka (Embedded Coder) ---
+//--- Struktury wejść i wyjść Simulinka (Embedded Coder) ---
 extern ExtU rtU;
 extern ExtY rtY;
 
-//--- Typy i stany maszyny ---
-/*typedef enum {
-    STATE_DISARMED = 0,
-    STATE_ARMING,
-    STATE_RAMP_TEST,
-    STATE_FLY,
-    STATE_FAILSAFE
-} DroneState_t;*/
-/*
-extern DroneState_t g_drone_state;
-
-// Zmienne obsługi rampy i liczników
-static uint16_t arm_counter = 0;
-static uint8_t lora_divider = 0;
-static uint16_t ramp_val = 0;
-static uint8_t ramp_direction_down = 0;
-
-
-// Tablice DShot dla kontrolera DMA1
-static uint16_t motor1[DSHOT_FRAME_SIZE]; // TIM1_CH1 - 16BIT
-static uint16_t motor2[DSHOT_FRAME_SIZE]; // TIM1_CH4 - 16BIT
-static uint32_t motor3[DSHOT_FRAME_SIZE]; // TIM2_CH1 - 32BIT
-static uint32_t motor4[DSHOT_FRAME_SIZE]; // TIM2_CH2 - 32BIT
-*/
-
+//--- Zmienne maszyny stanów ---
 DroneState_t g_drone_state = STATE_DISARMED;
 
-// --- FUNKCJE KODOWANIA DSHOT ---
-/*static void dshot_encode_16(uint16_t *buf, uint16_t val) {
-    if (val > 2047) val = 2047;
+static uint16_t arm_counter = 0;
+static uint16_t ramp_val = 0;
+static uint8_t ramp_direction_down = 0;
+static uint8_t flight_engaged = 0; // 0 = na ziemi, 1 = w powietrzu / aktywny lot
+
+//--- Tablice buforów DShot pod DMA1 ---
+static uint16_t motor1[DSHOT_FRAME_SIZE]; // TIM1_CH1 - 16-bit
+static uint16_t motor2[DSHOT_FRAME_SIZE]; // TIM1_CH4 - 16-bit
+static uint32_t motor3[DSHOT_FRAME_SIZE]; // TIM2_CH1 - 32-bit
+static uint32_t motor4[DSHOT_FRAME_SIZE]; // TIM2_CH2 - 32-bit
+
+// ==============================================================================
+// 1. KODOWANIE DSHOT600 (DMA CIRCULAR)
+// ==============================================================================
+
+static void dshot_encode_16(uint16_t *buf, uint16_t val) {
+    if (val > TROTTLE_MAX) val = TROTTLE_MAX;
+
     uint16_t packet = (val << 1);
-    uint16_t csum = 0, csum_data = packet;
-    for (int i = 0; i < 3; i++) { csum ^= csum_data; csum_data >>= 4; }
+    uint16_t csum = 0;
+    uint16_t csum_data = packet;
+
+    for (int i = 0; i < 3; i++) {
+        csum ^= csum_data;
+        csum_data >>= 4;
+    }
     packet = (packet << 4) | (csum & 0x0F);
 
     for (int i = 0; i < 16; i++) {
-        buf[i] = (packet & 0x8000) ? 200 : 100;
+        buf[i] = (packet & 0x8000) ? MOTOR_BIT_1 : MOTOR_BIT_0;
         packet <<= 1;
     }
-    for (int i = 16; i < DSHOT_FRAME_SIZE; i++) buf[i] = 0;
+    for (int i = 16; i < DSHOT_FRAME_SIZE; i++) {
+        buf[i] = 0;
+    }
 }
 
 static void dshot_encode_32(uint32_t *buf, uint16_t val) {
-    if (val > 2047) val = 2047;
+    if (val > TROTTLE_MAX) val = TROTTLE_MAX;
+
     uint16_t packet = (val << 1);
-    uint16_t csum = 0, csum_data = packet;
-    for (int i = 0; i < 3; i++) { csum ^= csum_data; csum_data >>= 4; }
+    uint16_t csum = 0;
+    uint16_t csum_data = packet;
+
+    for (int i = 0; i < 3; i++) {
+        csum ^= csum_data;
+        csum_data >>= 4;
+    }
     packet = (packet << 4) | (csum & 0x0F);
 
     for (int i = 0; i < 16; i++) {
-        buf[i] = (packet & 0x8000) ? 200 : 100;
+        buf[i] = (packet & 0x8000) ? MOTOR_BIT_1 : MOTOR_BIT_0;
         packet <<= 1;
     }
-    for (int i = 16; i < DSHOT_FRAME_SIZE; i++) buf[i] = 0;
+    for (int i = 16; i < DSHOT_FRAME_SIZE; i++) {
+        buf[i] = 0;
+    }
 }
 
 static void dshot_update_all(uint16_t m1, uint16_t m2, uint16_t m3, uint16_t m4) {
@@ -82,20 +88,38 @@ static void dshot_update_all(uint16_t m1, uint16_t m2, uint16_t m3, uint16_t m4)
     dshot_encode_32(motor4, m4);
 }
 
+// Bezpieczne mapowanie zakresu 48..2047 bez mnożenia
+static uint16_t fcs_to_dshot(float val) {
+    if (val <= 0.0f) {
+        return 0; // Silnik wyłączony
+    }
+    if (val < (float)TROTTLE_MIN) {
+        return TROTTLE_MIN; // Obroty jałowe (48)
+    }
+    if (val > (float)TROTTLE_MAX) {
+        return TROTTLE_MAX; // Maksimum (2047)
+    }
+    return (uint16_t)val;
+}
+
 // Inicjalizacja wyjść DShot i start ciągłego transferu DMA (Circular)
 void FCS_APP_Init(void) {
     __HAL_TIM_MOE_ENABLE(&htim1);
 
     dshot_update_all(0, 0, 0, 0);
 
-    HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_1, (uint32_t*)motor1, DSHOT_FRAME_SIZE);
+    /*HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_1, (uint32_t*)motor1, DSHOT_FRAME_SIZE);
     HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_4, (uint32_t*)motor2, DSHOT_FRAME_SIZE);
     HAL_TIM_PWM_Start_DMA(&htim2, TIM_CHANNEL_1, (uint32_t*)motor3, DSHOT_FRAME_SIZE);
-    HAL_TIM_PWM_Start_DMA(&htim2, TIM_CHANNEL_2, (uint32_t*)motor4, DSHOT_FRAME_SIZE);
-}*/
+    HAL_TIM_PWM_Start_DMA(&htim2, TIM_CHANNEL_2, (uint32_t*)motor4, DSHOT_FRAME_SIZE)*/;
+}
+
+// ==============================================================================
+// 2. PRZEPISANIE DANYCH DO MODELU SIMULINK
+// ==============================================================================
 
 void FCS_APP_Task(void) {
-    // 1. Przypisanie danych z IMU -> Simulink
+    // IMU i Barometr -> Simulink
     rtU.axayaz_s[0] = (real32_T)g_sensors_data.accel_x;
     rtU.axayaz_s[1] = (real32_T)g_sensors_data.accel_y;
     rtU.axayaz_s[2] = (real32_T)g_sensors_data.accel_z;
@@ -117,9 +141,9 @@ void FCS_APP_Task(void) {
     rtU.mxmymz_s[1] = 0.0f;
     rtU.mxmymz_s[2] = 0.0f;
 
-    // 2. Przypisanie danych z LoRa -> Simulink
-    rtU.controlModePosVSOrient = 0.0f;
-    rtU.takeoff_flag           = 0.0f;
+    // Aparatura LoRa -> Simulink
+    rtU.controlModePosVSOrient = (real32_T)rx_packet.Mode;
+    rtU.takeoff_flag           = (real32_T)flight_engaged;
     rtU.kill_switch            = (real32_T)rx_packet.killswitch;
     rtU.status                 = 0.0f;
 
@@ -127,106 +151,109 @@ void FCS_APP_Task(void) {
     rtU.pos_ref[1]             = 0.0f;
     rtU.pos_ref[2]             = 0.0f;
 
-    rtU.orient_ref[0] = (real32_T)rx_packet.roll;
-    rtU.orient_ref[1] = (real32_T)rx_packet.pitch;
-    rtU.orient_ref[2] = (real32_T)rx_packet.yaw;
-    rtU.orient_ref[3] = (real32_T)rx_packet.throttle / 1000.0f;
+    rtU.orient_ref[0] = (real32_T)rx_packet.roll/100.0;
+    rtU.orient_ref[1] = (real32_T)rx_packet.pitch/100.0f;
+    rtU.orient_ref[2] = (real32_T)rx_packet.yaw/100.0f;
+    rtU.orient_ref[3] = (real32_T)rx_packet.throttle / 100.0f;
 
-    // 3. Czas systemowy
     uint32_t current_tick      = HAL_GetTick();
     rtU.timestamp_ms           = (real32_T)current_tick;
     rtU.live_time_ticks        = (real32_T)current_tick;
     rtU.vbat_s                 = 12.6f;
 }
 
-/*
+// ==============================================================================
+// 3. MASZYNA STANÓW (200 Hz / 5 ms)
+// ==============================================================================
+
 void App_StateMachine(void) {
-    // 1. Wyzwolenie asynchronicznego odczytu IMU w tle przez DMA2
-    Sensors_TriggerRead_DMA(&hi2c1);
-
-    // 2. Podpętla wolna 20 Hz (co 50 ms): Odbiór radiowy LoRa
-    if (++lora_divider >= 10) {
-        lora_divider = 0;
-        if (lora_hardware_ok) {
-            LoRa_Process(&rx_packet);
-        }
-    }
-
-    // 3. Globalne sprawdzenie bezpieczeństwa (KillSwitch = 1 lub utrata łączności)
+    // Sprawdzenie bezpieczeństwa
     if (rx_packet.killswitch == 1 || !lora_hardware_ok) {
         g_drone_state = STATE_FAILSAFE;
     }
 
-    // 4. Główna maszyna stanów
     switch (g_drone_state) {
         case STATE_DISARMED:
             dshot_update_all(0, 0, 0, 0);
             FCS_initialize();
+            flight_engaged = 0; //takeoffflag
 
-            // Bezpieczne przejście: Killswitch = 0 I gaz na dole
-            if (rx_packet.killswitch == 1 && rx_packet.throttle < 50 && lora_hardware_ok) {
+            // Warunek uzbrojenia: Killswitch = 0, gaz poniżej 50
+            if (rx_packet.killswitch == 0 && rx_packet.throttle < 50 && lora_hardware_ok) {
                 arm_counter = 0;
                 g_drone_state = STATE_ARMING;
             }
             break;
 
         case STATE_ARMING:
-            // 1. Wysyłamy zera przez 250 ms, aby ESC się uzbroił
             dshot_update_all(0, 0, 0, 0);
 
-            if (++arm_counter >= 50) {
-                ramp_val = 0;
+            if (++arm_counter >= 100) {
+                ramp_val = TROTTLE_MIN;
                 ramp_direction_down = 0;
-                g_drone_state = STATE_RAMP_TEST; // Przechodzimy do rampy
+                g_drone_state = STATE_RAMP_TEST;
             }
             break;
 
         case STATE_RAMP_TEST:
-            // 2. Rampa testowa: płynne rozkręcanie i zwalnianie silników
             if (!ramp_direction_down) {
-                ramp_val += 2; // Zwiększaj gaz
-                if (ramp_val >= (TROTTLE_MAX / 3)) { // Test do ~33% gazu
-                    ramp_val = TROTTLE_MAX / 3;
+                ramp_val += 1;
+                if (ramp_val >= (TROTTLE_MIN + 250)) {
                     ramp_direction_down = 1;
                 }
             } else {
-                if (ramp_val > 2) {
-                    ramp_val -= 2; // Zmniejszaj gaz
+                if (ramp_val > TROTTLE_MIN) {
+                    ramp_val -= 1;
                 } else {
                     ramp_val = 0;
-                    g_drone_state = STATE_FLY; // Koniec rampy -> przejście do Simulinka
+                    dshot_update_all(0, 0, 0, 0);
+
+                    FCS_initialize(); // Zerowanie całek tuż przed startem regulacji
+                    g_drone_state = STATE_FLY;
                 }
             }
-
-            // Fizyczne wysłanie gazu z rampy na silniki!
             dshot_update_all(ramp_val, ramp_val, ramp_val, ramp_val);
             break;
 
         case STATE_FLY:
-            // 3. Pełna praca algorytmu Simulink FCS
             FCS_APP_Task();
-            FCS_step();
 
-            dshot_update_all(
-                (uint16_t)(rtY.FCSb[0] * 2047.0f),
-                (uint16_t)(rtY.FCSb[1] * 2047.0f),
-                (uint16_t)(rtY.FCSb[2] * 2047.0f),
-                (uint16_t)(rtY.FCSb[3] * 2047.0f)
-            );
+            // Etap 1: Czekanie na ziemi na pierwsze pchnięcie drążka
+                        if (!flight_engaged) {
+                            if (rx_packet.throttle >= 100) {
+                                flight_engaged = 1; // Zatrzaśnięcie lotu: od teraz dron jest w powietrzu
+                            } else {
+                                // Przed startem trzymaj stany zresetowane i silniki wyłączone (lub na jałowych)
+                                FCS_initialize();
+                                dshot_update_all(0, 0, 0, 0);
+                                break;
+                            }
+                        }
+
+            // Etap 2: Aktywny lot - Simulink liczy cały czas, niezależnie od puszczenia gałek
+                FCS_step();
+
+                dshot_update_all(
+                    fcs_to_dshot(rtY.FCSb[0]),
+                    fcs_to_dshot(rtY.FCSb[1]),
+                    fcs_to_dshot(rtY.FCSb[2]),
+                    fcs_to_dshot(rtY.FCSb[3])
+                );
+
             break;
 
         case STATE_FAILSAFE:
             dshot_update_all(0, 0, 0, 0);
             FCS_initialize();
 
-            if (rx_packet.killswitch == 0 && lora_hardware_ok) {
+            if (rx_packet.killswitch == 0 && rx_packet.throttle < 50 && lora_hardware_ok) {
                 g_drone_state = STATE_DISARMED;
             }
             break;
 
         default:
+            dshot_update_all(0, 0, 0, 0);
             g_drone_state = STATE_DISARMED;
             break;
     }
 }
-*/

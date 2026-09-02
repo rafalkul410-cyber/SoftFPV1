@@ -53,44 +53,18 @@ extern "C" {
 #endif
 
 #include "main.h"
-#include "FCS.h"
-#include "sensors.h"
-#include "lora.h"
 #include <stdint.h>
 #include <stdbool.h>
 
-/* --- Konfiguracja DShot600 (zgodna z Twoim kodem bazowym) --- */
+/* --- Konfiguracja DShot600 --- */
 #define MOTOR_BIT_0           100
 #define MOTOR_BIT_1           200
-#define DSHOT_FRAME_SIZE      32 // 64 bylo i dzialalo
-#define MOTOR_BITLENGTH       20
+#define DSHOT_FRAME_SIZE      32
 
-#define TROTTLE_MIN   48
-#define TROTTLE_MAX    2047
+#define TROTTLE_MIN           48
+#define TROTTLE_MAX           2047
 
-#define ESC_POWER_UP    600 // Czas oczekiwania/uzbrajania w przerwaniach TIM6 (np. 2 sekundy przy 1 kHz)
-
-/* --- Typy stanów buzzera --- */
-typedef enum {
-    BUZZER_OFF = 0,
-    BUZZER_HEARTBEAT,
-    BUZZER_FAILSAFE,
-    BUZZER_ARMED
-} BuzzerState_t;
-
-/*
- --- Deklaracje timerów peryferiów ---
-extern TIM_HandleTypeDef htim1; // Silniki  1,2 (np. CH1)
-extern TIM_HandleTypeDef htim2; // Silnik 3,4  (np. CH1)
-extern TIM_HandleTypeDef htim6; // Główny timer pętli przerwań
-*/
-
-/* --- Główne funkcje modułu --- */
-void FCS_APP_Init(void);
-void FCS_APP_Task(void);
-void App_StateMachine(void);
-
-
+/* --- Typy stanów maszyny drona --- */
 typedef enum {
     STATE_DISARMED = 0,
     STATE_ARMING,
@@ -101,6 +75,10 @@ typedef enum {
 
 extern DroneState_t g_drone_state;
 
+/* --- Prototypy funkcji modułu FCS --- */
+void FCS_APP_Init(void);
+void FCS_APP_Task(void);
+void App_StateMachine(void);
 
 #ifdef __cplusplus
 }
