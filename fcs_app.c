@@ -172,9 +172,9 @@ void FCS_APP_Task(void) {
 	rtU.axayaz_s[1] = (real32_T)LPF_Update(&lpf_accel_y, raw_ay);
 	rtU.axayaz_s[2] = (real32_T)LPF_Update(&lpf_accel_z, raw_az);
 
-	float raw_gx = -(float)g_sensors_data.gyro_y*0.0174532925f;  // deg/s --> rad/s
+	float raw_gx =  (float)g_sensors_data.gyro_y*0.0174532925f;  // deg/s --> rad/s
     float raw_gy =  (float)g_sensors_data.gyro_x*0.0174532925f;
-    float raw_gz = -(float)g_sensors_data.gyro_z*0.0174532925f;
+    float raw_gz =  (float)g_sensors_data.gyro_z*0.0174532925f;
 
     rtU.pqr_sf[0]   = (real32_T)LPF_Update(&lpf_gyro_p, raw_gx);
     rtU.pqr_sf[1]   = (real32_T)LPF_Update(&lpf_gyro_q, raw_gy);
