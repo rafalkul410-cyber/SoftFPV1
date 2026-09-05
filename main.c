@@ -23,6 +23,7 @@
 #include "lora.h"
 #include "sensors.h"
 #include "fcs_app.h"
+#include "vbat.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -60,19 +61,14 @@ volatile uint8_t diag_init_result = 0;
 volatile uint8_t diag_scanner_found[5] = {0};
 volatile uint8_t diag_scanner_count = 0;
 
-
-
-// Struktury danych
 LoRa_ControlPacket_t rx_packet;
-
-static uint8_t bme_divider = 20;
-
 uint16_t value = 0;			            // throttle value to be sent
 uint16_t ctr = 0;						// arming sequence counter
 uint8_t trottle_down=0;					// dunnot change trottle up.
 uint8_t armed = 0;
 uint32_t motor[DSHOT_FRAME_SIZE];		// duty cycles array
 
+static uint8_t bme_divider = 20;
 static uint16_t motor1[DSHOT_FRAME_SIZE]; // TIM1 - 16BIT
 static uint16_t motor2[DSHOT_FRAME_SIZE];
 static uint32_t motor3[DSHOT_FRAME_SIZE]; //TIM2 - 32BIT
@@ -90,7 +86,7 @@ void send_dshot_motors(uint16_t m1, uint16_t m2, uint16_t m3, uint16_t m4);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-// Kodowanie dla TIM2 (32-bit)
+// Kodowanie dla TIM1 (16-bit)
 void dshot_encode_16(uint16_t *buf, uint16_t val) {
     if (val > 2047) val = 2047;
     uint16_t packet = (val << 1);
@@ -119,45 +115,6 @@ void dshot_encode_32(uint32_t *buf, uint16_t val) {
     }
     for (int i = 16; i < DSHOT_FRAME_SIZE; i++) buf[i] = 0;
 }
-
-/*void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-  if (htim->Instance == TIM6) {
-
-	  flag_process_5ms = 1;
-      // 1. Faza uzbrajania (wysyłanie zera)
-      if (ctr < ESC_POWER_UP) {
-        ++ctr;
-        value = 0;
-      }
-      // 2. Faza po uzbrojeniu (stały gaz roboczy)
-      else if (armed) {
-        value = 350;
-      }
-      // 3. Faza rampy testowej (jeśli jeszcze nie uzbrojony)
-      else {
-        ++ctr;
-        if (!trottle_down) {
-          ++value;
-          if (value >= TROTTLE_MAX/2) {
-            value = TROTTLE_MAX/2;  // devide by 2 for less motor pick for tests
-            trottle_down = 1;
-          }
-        } else {
-          --value;
-          if (value <= TROTTLE_MIN) {
-            value = TROTTLE_MIN;
-            armed = 1; // Koniec rampy, przechodzimy do armed
-          }
-        }
-      }
-      	  	// TIM1
-      	  	dshot_encode_16(motor1, value);
-      	  	dshot_encode_16(motor2, value);
-            // TIM2
-            dshot_encode_32(motor3, value);
-            dshot_encode_32(motor4, value);
-  	}
-  }*/
 void send_dshot_motors(uint16_t m1, uint16_t m2, uint16_t m3, uint16_t m4) {
     dshot_encode_16(motor1, m1);
     dshot_encode_16(motor2, m2);
@@ -169,33 +126,6 @@ void send_dshot_motors(uint16_t m1, uint16_t m2, uint16_t m3, uint16_t m4) {
     HAL_TIM_PWM_Start_DMA(&htim2, TIM_CHANNEL_1, (uint32_t*)motor3, DSHOT_FRAME_SIZE);
     HAL_TIM_PWM_Start_DMA(&htim2, TIM_CHANNEL_2, (uint32_t*)motor4, DSHOT_FRAME_SIZE);
 }
-
-
-/*void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-  if (htim->Instance == TIM6) {
-
-	  // KROK 1: Przez pierwsze 3 sekundy trzymamy MAX
-	        if (ctr < 3600) {
-	        	++ctr;
-	          value = 2047; // ESC gra 4 tony (zapisuje MAX)
-	        }
-	        // KROK 2: Przez kolejne 3 sekundy trzymamy MIN (0)
-	        else if (ctr < 7200) {
-	        	++ctr;
-	          value = 0;    // ESC zatwierdza dół i uzbraja się (2 tony)
-	        }
-	        // KROK 3: Po udanej kalibracji podajemy gaz roboczy
-	        else {
-	          value = 250;  // Silnik zaczyna się kręcić
-	        }
-
-      dshot600(motor1, value);
-      dshot600(motor2, value);
-      dshot600(motor3, value);
-      dshot600(motor4, value);
-
-  }
-}*/
 
 /* USER CODE END 0 */
 
@@ -213,7 +143,7 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
++  HAL_Init();
 
   /* USER CODE BEGIN Init */
 
@@ -237,34 +167,9 @@ int main(void)
   MX_SPI1_Init();
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
-  /*  //lora_hardware_ok = LoRa_Init();
-  if (Sensors_Init(&hi2c1) != 0) {
-          // Błąd inicjalizacji czujników - można dodać sygnalizację diodą LED
-      }
-   // FCS_APP_Init();
-    FCS_initialize();
-
-  // 4. Konfiguracja sprzętowa TIM1 (Main Output Enable dla kanałów komplementarnych/zaawansowanych)    __HAL_TIM_MOE_ENABLE(&htim1);
-
-    // 5. Wstępne wyczyszczenie buforów DShot (wartość 0)
-    dshot_encode_16(motor1, 0);
-    dshot_encode_16(motor2, 0);
-    dshot_encode_32(motor3, 0);
-    dshot_encode_32(motor4, 0);
-
-    // 6. Sekwencja uzbrojenia ESC (wysyłanie zer przez send_dshot_motors)
-  for (int i = 0; i < 50; i++) {
-        send_dshot_motors(0, 0, 0, 0);
-        HAL_Delay(5);
-  }
-
-            HAL_TIM_PWM_Stop_DMA(&htim1, TIM_CHANNEL_1);
-            HAL_TIM_PWM_Stop_DMA(&htim1, TIM_CHANNEL_4);
-            HAL_TIM_PWM_Stop_DMA(&htim2, TIM_CHANNEL_1);
-            HAL_TIM_PWM_Stop_DMA(&htim2, TIM_CHANNEL_2);
-
-    // 7. Start timera głównej pętli 200 Hz (5 ms)
-   HAL_TIM_Base_Start_IT(&htim6);*/
+  // Sprzętowa kalibracja ADC (wymagana w STM32L4!)
+  // Kalibracja i start modułu baterii
+  //VBAT_Init(&hadc1);
 
   if (Sensors_Init(&hi2c1) != 0) {
         // Błąd komunikacji z czujnikami (opcjonalnie: dioda LED / pętla błędu)
@@ -277,30 +182,26 @@ int main(void)
         lora_hardware_ok = 0; // W razie błędu SPI dron pozostanie w bezpiecznym FAILSAFE
     }
 
-    // 3. Inicjalizacja modelu Simulink (zerowanie stanów i zmiennych)
+    //Inicjalizacja modelu Simulink (zerowanie stanów i zmiennych)
     FCS_initialize();
 
-    // 4. Inicjalizacja wyjść DShot i start ciągłego generowania sygnału DMA Circular
-    FCS_APP_Init();
-
-    // 5. Wyłączenie zbędnych przerwań DMA od timerów DShot (zapobiega zapychaniu procesora)
-    __HAL_DMA_DISABLE_IT(htim1.hdma[TIM_DMA_ID_CC1], DMA_IT_TC | DMA_IT_HT | DMA_IT_TE);
-    __HAL_DMA_DISABLE_IT(htim1.hdma[TIM_DMA_ID_CC4], DMA_IT_TC | DMA_IT_HT | DMA_IT_TE);
-    __HAL_DMA_DISABLE_IT(htim2.hdma[TIM_DMA_ID_CC1], DMA_IT_TC | DMA_IT_HT | DMA_IT_TE);
-    __HAL_DMA_DISABLE_IT(htim2.hdma[TIM_DMA_ID_CC2], DMA_IT_TC | DMA_IT_HT | DMA_IT_TE);
+    //Inicjalizacja wyjść DShot i start ciągłego generowania sygnału DMA Circular
+   //FCS_APP_Init();
 
     dshot_encode_16(motor1, 0);
     dshot_encode_16(motor2, 0);
     dshot_encode_32(motor3, 0);
     dshot_encode_32(motor4, 0);
 
-    // 6. Sekwencja uzbrojenia ESC (wysyłanie zer przez send_dshot_motors)
-  for (int i = 0; i < 50; i++) {
+    //Sekwencja uzbrojenia ESC (wysyłanie zer przez send_dshot_motors)
+    __HAL_TIM_MOE_ENABLE(&htim1);
+
+    for (int i = 0; i < 50; i++) {
         send_dshot_motors(0, 0, 0, 0);
         HAL_Delay(5);
   }
 
-    // 6. Start timera sprzętowego taktującego główną pętlę 200 Hz (5 ms)
+    //Start timera sprzętowego taktującego główną pętlę 200 Hz (5 ms)
     HAL_TIM_Base_Start_IT(&htim6);
 
   /* USER CODE END 2 */
@@ -309,40 +210,30 @@ int main(void)
   /* USER CODE BEGIN WHILE */
     while (1)
     {
-            // =====================================================================
             // ZADANIE 1: Nasłuch LoRa (w wolnym czasie procesora)
-            // =====================================================================
             if (lora_hardware_ok)
             {
                 LoRa_Process(&rx_packet);
             }
-
-            // =====================================================================
             // ZADANIE 2: Ścisła pętla dynamiki i sterowania (Dokładnie 200 Hz / 5 ms)
-            // =====================================================================
             if (flag_process_5ms)
             {
-
             	flag_process_5ms = 0; // Kasowanie flagi sprzętowej
 
+            	Sensors_TriggerMPU_DMA(&hi2c1);
 
-                // Rozdzielenie DMA I2C: 19 cykli MPU (190 Hz) i 1 cykl BME (10 Hz)
-                Sensors_TriggerMPU_DMA(&hi2c1);
-                bme_divider++;
-                if (bme_divider >= 20)
-                {
-                    Sensors_TriggerBME_DMA(&hi2c1);
-                    bme_divider = 0;
-                }
-
+            	    // BME i VBAT wywołujemy tylko w tle, nie blokując danych IMU
+            	    if (++bme_divider >= 20)
+            	    {
+            	        bme_divider = 0;
+            	        //VBAT_Update(&hadc1);
+            	    }
 
                 // Wykonanie maszyny stanów (rampa, bezpieczeństwo, krok Simulinka i wyjścia silników)
-              //  App_StateMachine();
+            	FCS_APP_Task();
+                App_StateMachine();
             	}
-
     }
-
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -400,7 +291,6 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim->Instance == TIM6)
@@ -408,13 +298,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         flag_process_5ms = 1;
     }
 }
-
-/*void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
-{
-    if (GPIO_Pin == GPIO_PIN_12)
-    {
-        lora_frame_ready = 1;
-    }*/
 /* USER CODE END 4 */
 
 /**
