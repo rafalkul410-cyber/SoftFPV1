@@ -176,7 +176,7 @@ int main(void)
     }
 
     // 2. Inicjalizacja modułu radiowego LoRa SX1278 po SPI
-  	  HAL_Delay(50);
+
     if (LoRa_Init() == 1) {
         lora_hardware_ok = 1;
     } else {
@@ -227,6 +227,7 @@ int main(void)
             	    if (++bme_divider >= 20)
             	    {
             	        bme_divider = 0;
+            	        Sensors_TriggerBME_DMA(&hi2c1);
             	        //VBAT_Update(&hadc1);
             	    }
 
