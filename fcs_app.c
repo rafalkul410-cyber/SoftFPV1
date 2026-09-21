@@ -17,9 +17,8 @@ extern LoRa_ControlPacket_t rx_packet;
 extern volatile uint8_t lora_hardware_ok;
 
 //--- Struktury wejść i wyjść Simulinka (Embedded Coder) ---
-extern ExtU rtU;
-extern ExtY rtY;
-
+extern ExtU_FCS_T FCS_U;
+extern ExtY_FCS_T FCS_Y;
 //--- Zmienne maszyny stanów ---
 DroneState_t g_drone_state = STATE_DISARMED;
 
@@ -100,7 +99,9 @@ static void dshot_update_all(uint16_t m1, uint16_t m2, uint16_t m3, uint16_t m4)
 
     htim2.State = HAL_TIM_STATE_READY;
     HAL_TIM_PWM_Start_DMA(&htim2, TIM_CHANNEL_2, (uint32_t*)motor4, DSHOT_FRAME_SIZE);
-    }
+
+
+}
 
 // Bezpieczne mapowanie zakresu 48..2047 bez mnożenia
 static uint16_t fcs_to_dshot(float val) {
@@ -118,14 +119,49 @@ static uint16_t fcs_to_dshot(float val) {
 
 // Inicjalizacja wyjść DShot i start ciągłego transferu DMA (Circular)
 void FCS_APP_Init(void) {
-    __HAL_TIM_MOE_ENABLE(&htim1);
+   // __HAL_TIM_MOE_ENABLE(&htim1);
 
-    dshot_update_all(0, 0, 0, 0);
+    /*dshot_update_all(0, 0, 0, 0);
 
-/*    HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_1, (uint32_t*)motor1, DSHOT_FRAME_SIZE);
+    HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_1, (uint32_t*)motor1, DSHOT_FRAME_SIZE);
     HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_4, (uint32_t*)motor2, DSHOT_FRAME_SIZE);
     HAL_TIM_PWM_Start_DMA(&htim2, TIM_CHANNEL_1, (uint32_t*)motor3, DSHOT_FRAME_SIZE);
-    HAL_TIM_PWM_Start_DMA(&htim2, TIM_CHANNEL_2, (uint32_t*)motor4, DSHOT_FRAME_SIZE);*/
+    HAL_TIM_PWM_Start_DMA(&htim2, TIM_CHANNEL_2, (uint32_t*)motor4, DSHOT_FRAME_SIZE);
+}*/
+	TIM1->DIER &= ~(TIM_DIER_CC1DE | TIM_DIER_CC4DE);
+	    TIM2->DIER &= ~(TIM_DIER_CC1DE | TIM_DIER_CC2DE);
+
+	    // 2. Wyłącz wyłącznie te 4 konkretne kanały DMA (bez dotykania USART2 na Ch6)
+	    DMA1_Channel2->CCR &= ~DMA_CCR_EN;
+	    DMA1_Channel4->CCR &= ~DMA_CCR_EN;
+	    DMA1_Channel5->CCR &= ~DMA_CCR_EN;
+	    DMA1_Channel7->CCR &= ~DMA_CCR_EN;
+
+	    // 3. Wyczyść flagi TYLKO dla tych 4 kanałów (nie czyść całego IFCR na raz!)
+	    // Flagi: Channel 2 (bity 4..7), Ch 4 (12..15), Ch 5 (16..19), Ch 7 (24..27)
+	    DMA1->IFCR = (0xF << 4) | (0xF << 12) | (0xF << 16) | (0xF << 24);
+
+	    // 4. Wyzeruj rejestry porównania (CCR) i liczniki (CNT)
+	    TIM1->CCR1 = 0;
+	    TIM1->CCR4 = 0;
+	    TIM2->CCR1 = 0;
+	    TIM2->CCR2 = 0;
+	    TIM1->CNT  = 0;
+	    TIM2->CNT  = 0;
+
+	    // 5. Wymuś odblokowanie wyjść głównych w TIM1 (MOE)
+	    TIM1->BDTR |= TIM_BDTR_MOE;
+
+	    // 6. Reset stanów struktur HAL
+	    htim1.State = HAL_TIM_STATE_READY;
+	    htim2.State = HAL_TIM_STATE_READY;
+	    if (htim1.hdma[TIM_DMA_ID_CC1]) htim1.hdma[TIM_DMA_ID_CC1]->State = HAL_DMA_STATE_READY;
+	    if (htim1.hdma[TIM_DMA_ID_CC4]) htim1.hdma[TIM_DMA_ID_CC4]->State = HAL_DMA_STATE_READY;
+	    if (htim2.hdma[TIM_DMA_ID_CC1]) htim2.hdma[TIM_DMA_ID_CC1]->State = HAL_DMA_STATE_READY;
+	    if (htim2.hdma[TIM_DMA_ID_CC2]) htim2.hdma[TIM_DMA_ID_CC2]->State = HAL_DMA_STATE_READY;
+
+	    // 7. Wysłanie pierwszej paczki zer
+	    dshot_update_all(0, 0, 0, 0);
 }
 
 // ==============================================================================
@@ -168,60 +204,61 @@ void FCS_APP_Task(void) {
 	float raw_ay =  (float)g_sensors_data.accel_x;
 	float raw_az = -(float)g_sensors_data.accel_z;
 
-    rtU.axayaz_s[0] = (real32_T)LPF_Update(&lpf_accel_x, raw_ax);
-	rtU.axayaz_s[1] = (real32_T)LPF_Update(&lpf_accel_y, raw_ay);
-	rtU.axayaz_s[2] = (real32_T)LPF_Update(&lpf_accel_z, raw_az);
+    FCS_U.axayaz_s[0] = (real32_T)LPF_Update(&lpf_accel_x, raw_ax)*9.81f;
+	FCS_U.axayaz_s[1] = (real32_T)LPF_Update(&lpf_accel_y, raw_ay)*9.81f;
+	FCS_U.axayaz_s[2] = (real32_T)LPF_Update(&lpf_accel_z, raw_az)*9.81f;//w spocz
 
 	float raw_gx =  (float)g_sensors_data.gyro_y*0.0174532925f;  // deg/s --> rad/s
     float raw_gy =  (float)g_sensors_data.gyro_x*0.0174532925f;
     float raw_gz =  (float)g_sensors_data.gyro_z*0.0174532925f;
 
-    rtU.pqr_sf[0]   = (real32_T)LPF_Update(&lpf_gyro_p, raw_gx);
-    rtU.pqr_sf[1]   = (real32_T)LPF_Update(&lpf_gyro_q, raw_gy);
-    rtU.pqr_sf[2]   = (real32_T)LPF_Update(&lpf_gyro_r, raw_gz);
+    FCS_U.pqr_sf[0]   = (real32_T)LPF_Update(&lpf_gyro_p, raw_gx);
+    FCS_U.pqr_sf[1]   = (real32_T)LPF_Update(&lpf_gyro_q, raw_gy);
+    FCS_U.pqr_sf[2]   = (real32_T)LPF_Update(&lpf_gyro_r, raw_gz);
 
-	/*	rtU.axayaz_s[0] = 0.0f;
-	    rtU.axayaz_s[1] = 0.0f;
-	    rtU.axayaz_s[2] = 1.0f; // 1G w osi Z
+	/*	FCS_U.axayaz_s[0] = 0.0f;
+	    FCS_U.axayaz_s[1] = 0.0f;
+	    FCS_U.axayaz_s[2] = 1.0f; // 1G w osi Z
 
-	    rtU.pqr_sf[0]   = 0.0f; // brak rotacji roll
-	    rtU.pqr_sf[1]   = 0.0f; // brak rotacji pitch
-	    rtU.pqr_sf[2]   = 0.0f; // brak rotacji yaw*/
+	    FCS_U.pqr_sf[0]   = 0.0f; // brak rotacji roll
+	    FCS_U.pqr_sf[1]   = 0.0f; // brak rotacji pitch
+	    FCS_U.pqr_sf[2]   = 0.0f; // brak rotacji yaw*/
 
 
-    rtU.pressure_s  = (real32_T)g_sensors_data.pressure_hpa;
-    rtU.temp_s      = (real32_T)g_sensors_data.temp_c;
+    FCS_U.pressure_s  = (real32_T)g_sensors_data.pressure_hpa;
+    FCS_U.temp_s      = (real32_T)g_sensors_data.temp_c;
 
-    if (rtU.pressure_s > 100.0f) {
-        rtU.altitude_s = 44330.0f * (1.0f - powf(rtU.pressure_s / 1013.25f, 0.190295f));
+    if (FCS_U.pressure_s > 100.0f) {
+        FCS_U.altitude_s = 44330.0f * (1.0f - powf(FCS_U.pressure_s / 1013.25f, 0.190295f));
     } else {
-        rtU.altitude_s = 0.0f;
+        FCS_U.altitude_s = 0.0f;
     }
 
-    rtU.mxmymz_s[0] = 0.0f;
-    rtU.mxmymz_s[1] = 0.0f;
-    rtU.mxmymz_s[2] = 0.0f;
+    FCS_U.mxmymz_s[0] = 0.0f;
+    FCS_U.mxmymz_s[1] = 0.0f;
+    FCS_U.mxmymz_s[2] = 0.0f;
 
     // Aparatura LoRa -> Simulink
-    //rtU.controlModePosVSOrient = (real32_T)rx_packet.Mode;
-    rtU.controlModePosVSOrient = 0.0f;
-    rtU.takeoff_flag           = (real32_T)flight_engaged;
-    rtU.kill_switch            = (real32_T)rx_packet.killswitch;
-    rtU.status                 = 0.0f;
+    //FCS_U.controlModePosVSOrient = (real32_T)rx_packet.Mode;
+    FCS_U.controlModePosVSOrient = 0.0f;
+    FCS_U.takeoff_flag           = (real32_T)flight_engaged;
+    FCS_U.kill_switch            = (real32_T)rx_packet.killswitch;
+    FCS_U.status                 = 0.0f;
 
-    rtU.pos_ref[0]             = 0.0f;
-    rtU.pos_ref[1]             = 0.0f;
-    rtU.pos_ref[2]             = 0.0f;
+    FCS_U.pos_ref[0]             = 0.0f;
+    FCS_U.pos_ref[1]             = 0.0f;
+    FCS_U.pos_ref[2]             = 0.0f;
 
-    rtU.orient_ref[0] = (real32_T)rx_packet.roll/100.0;
-    rtU.orient_ref[1] = (real32_T)rx_packet.pitch/100.0f;
-    rtU.orient_ref[2] = (real32_T)rx_packet.yaw/100.0f;
-    rtU.orient_ref[3] = (real32_T)rx_packet.throttle / 100.0f;
+    FCS_U.orient_ref[0] = (real32_T)rx_packet.roll/1000.0;
+    FCS_U.orient_ref[1] = (real32_T)rx_packet.pitch/1000.0f;
+    FCS_U.orient_ref[2] = (real32_T)rx_packet.yaw/1000.0f;
+    //FCS_U.orient_ref[3] = (real32_T)rx_packet.throttle / 1000.0f;
+    FCS_U.orient_ref[3] = rx_packet.potValue/100.0f;
 
     uint32_t current_tick      = HAL_GetTick();
-    rtU.timestamp_ms           = (real32_T)current_tick;
-    rtU.live_time_ticks        = (real32_T)current_tick;
-    rtU.vbat_s                 = (real32_T)g_vbat_voltage;
+    FCS_U.timestamp_ms           = (real32_T)current_tick;
+    FCS_U.live_time_ticks        = (real32_T)current_tick;
+    FCS_U.vbat_s                 = (real32_T)g_vbat_voltage;
 }
 
 // ==============================================================================
@@ -230,7 +267,7 @@ void FCS_APP_Task(void) {
 
 void App_StateMachine(void) {
     // Sprawdzenie bezpieczeństwa
-    if (rx_packet.killswitch == 1 || !lora_hardware_ok) {
+    if (rx_packet.killswitch == 1 || lora_hardware_ok==0) {
         g_drone_state = STATE_FAILSAFE;
     }
 
@@ -238,7 +275,7 @@ void App_StateMachine(void) {
         case STATE_DISARMED:
             dshot_update_all(0, 0, 0, 0);
             flight_engaged = 0; //takeoffflag
-            //FCS_initialize();
+            FCS_initialize();
 
             // Warunek uzbrojenia: Killswitch = 0, gaz poniżej 50
             if (rx_packet.killswitch == 0 && rx_packet.throttle < 50 && lora_hardware_ok) {
@@ -254,32 +291,35 @@ void App_StateMachine(void) {
             if (++arm_counter >= 600) {
                 ramp_val = TROTTLE_MIN;
                 ramp_direction_down = 0;
-                g_drone_state = STATE_RAMP_TEST;
+                //g_drone_state = STATE_RAMP_TEST;
+                g_drone_state = STATE_FLY;
             }
             break;
 
         case STATE_RAMP_TEST:
-        	flight_engaged = 0;
-        	if (!ramp_direction_down) {
-                ramp_val += 1;
-                if (ramp_val >= (TROTTLE_MIN + 250)) {
-                    ramp_direction_down = 1;
-                }
-            } else {
-                if (ramp_val > TROTTLE_MIN) {
-                    ramp_val -= 1;
-                } else {
-                    ramp_val = 0;
-                    dshot_update_all(0, 0, 0, 0);
+                    flight_engaged = 0;
 
-                    FCS_initialize(); // Zerowanie całek tuż przed startem regulacji
-                    //LPF_Reset_All();
-                    g_drone_state = STATE_FLY;
-                }
-            }
-            dshot_update_all(ramp_val, ramp_val, ramp_val, ramp_val);
-            break;
+                    if (!ramp_direction_down) {
+                        ramp_val += 2; // Szybsze, pewne podnoszenie obrotów (+2 co 5 ms)
+                        if (ramp_val >= (TROTTLE_MIN + 250)) {
+                            ramp_val = TROTTLE_MIN + 250;
+                            ramp_direction_down = 1;
+                        }
+                    } else {
+                        if (ramp_val > (TROTTLE_MIN + 2)) {
+                            ramp_val -= 2; // Płynne opuszczanie
+                        } else {
+                            // Koniec testu rampy -> przejście do czystego stanu spoczynku
+                            ramp_val = 0;
+                            ramp_direction_down = 0;
+                            FCS_initialize(); // Zerowanie regulatora PID
+                            g_drone_state = STATE_FLY;
 
+                            // Wysłanie zer na silniki i natychmiastowe wyjście ze switcha
+                            dshot_update_all(0, 0, 0, 0);
+                            break;
+                        }
+                    }
         case STATE_FLY:
             // Etap 1: Czekanie na ziemi na pierwsze pchnięcie drążka
                         if (!flight_engaged) {
@@ -298,11 +338,16 @@ void App_StateMachine(void) {
                 FCS_step();
 
              static float m1, m2, m3, m4;
-                m1 =  rtY.FCSb[0] *0.33f;
-                m2 =  rtY.FCSb[1] *0.33f;
-                m3 =  rtY.FCSb[2] *0.33f;
-                m4 =  rtY.FCSb[3] *0.33f;
+                m1 =  FCS_Y.FCSb[0]*0.5f;
+                m2 =  FCS_Y.FCSb[1]*0.5f;
+                m3 =  FCS_Y.FCSb[2]*0.5f;
+                m4 =  FCS_Y.FCSb[3]*0.5f;
 
+      /*      m1 = (real32_T)rx_packet.potValue;
+            m2 = (real32_T)rx_packet.potValue;
+            m3 = (real32_T)rx_packet.potValue;
+            m4 = (real32_T)rx_packet.potValue;
+*/
                 dshot_update_all(
                     fcs_to_dshot(m1),
                     fcs_to_dshot(m2),
@@ -314,10 +359,10 @@ void App_StateMachine(void) {
                //dshot_update_all(80, 80, 80, 80);
 
            /*     dshot_update_all(
-                fcs_to_dshot(rtY.FCSb[0]),
-                fcs_to_dshot(rtY.FCSb[1]),
-                fcs_to_dshot(rtY.FCSb[2]),
-                fcs_to_dshot(rtY.FCSb[3])
+                fcs_to_dshot(FCS_Y.FCSb[0]),
+                fcs_to_dshot(FCS_Y.FCSb[1]),
+                fcs_to_dshot(FCS_Y.FCSb[2]),
+                fcs_to_dshot(FCS_Y.FCSb[3])
                 );*/
 
             break;
@@ -338,5 +383,6 @@ void App_StateMachine(void) {
             break;
     }
 }
+
 
 
