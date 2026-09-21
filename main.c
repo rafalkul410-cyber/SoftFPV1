@@ -127,6 +127,7 @@ void send_dshot_motors(uint16_t m1, uint16_t m2, uint16_t m3, uint16_t m4) {
     HAL_TIM_PWM_Start_DMA(&htim2, TIM_CHANNEL_2, (uint32_t*)motor4, DSHOT_FRAME_SIZE);
 }
 
+
 /* USER CODE END 0 */
 
 /**
@@ -187,21 +188,23 @@ int main(void)
     FCS_initialize();
 
     //Inicjalizacja wyjść DShot i start ciągłego generowania sygnału DMA Circular
-   //FCS_APP_Init();
+    //FCS_APP_Init();
 
-    dshot_encode_16(motor1, 0);
-    dshot_encode_16(motor2, 0);
-    dshot_encode_32(motor3, 0);
-    dshot_encode_32(motor4, 0);
 
     //Sekwencja uzbrojenia ESC (wysyłanie zer przez send_dshot_motors)
     __HAL_TIM_MOE_ENABLE(&htim1);
 
-    for (int i = 0; i < 50; i++) {
+    	dshot_encode_16(motor1, 0);
+        dshot_encode_16(motor2, 0);
+        dshot_encode_32(motor3, 0);
+        dshot_encode_32(motor4, 0);
+
+
+   for (int i = 0; i < 600; i++) {
         send_dshot_motors(0, 0, 0, 0);
         HAL_Delay(5);
   }
-
+    //for(volatile int j = 0; j < 4000; j++);
     //Start timera sprzętowego taktującego główną pętlę 200 Hz (5 ms)
     HAL_TIM_Base_Start_IT(&htim6);
 
