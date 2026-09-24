@@ -80,7 +80,7 @@ void send_dshot_motors(uint16_t m1, uint16_t m2, uint16_t m3, uint16_t m4);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-static uint16_t dshot_prepare_packet(uint16_t value) {
+/*static uint16_t dshot_prepare_packet(uint16_t value) {
     uint16_t packet = (value << 5); // telemetria = 0
     uint16_t csum = 0;
     uint16_t csum_data = packet;
@@ -90,6 +90,21 @@ static uint16_t dshot_prepare_packet(uint16_t value) {
     }
     csum &= 0x0F;
     return (packet | csum);
+}*/
+static uint16_t dshot_prepare_packet(uint16_t value) {
+    // 1. Zabezpieczenie zakresu DShot (0..2047)
+    if (value > 2047) {
+        value = 2047;
+    }
+
+    // 2. Przygotuj 12 bitów danych: 11 bitów wartości + 1 bit telemetrii (0)
+    uint16_t packet = (value << 1);
+
+    // 3. Oblicz CRC: XOR trzech 4-bitowych bloków (nibbli)
+    uint16_t csum = (packet ^ (packet >> 4) ^ (packet >> 8)) & 0x0F;
+
+    // 4. Przesuń dane na bity 15..4 i wstaw sumę kontrolną na bity 3..0
+    return (packet << 4) | csum;
 }
 // Wypełnianie bufora 16-bitowego (dla TIM1)
 static void dshot_fill_buffer_16(uint16_t *buf, uint16_t packet) {
@@ -111,8 +126,19 @@ static void dshot_fill_buffer_32(uint32_t *buf, uint16_t packet) {
         }
 }
 
+volatile uint16_t dbg_dshot_m1 = 0;
+volatile uint16_t dbg_dshot_m2 = 0;
+volatile uint16_t dbg_dshot_m3 = 0;
+volatile uint16_t dbg_dshot_m4 = 0;
+
+
 // Wysyłka ramek przez DMA
 void dshot_write(uint16_t m1, uint16_t m2, uint16_t m3, uint16_t m4) {
+		dbg_dshot_m1 = m1;
+	    dbg_dshot_m2 = m2;
+	    dbg_dshot_m3 = m3;
+	    dbg_dshot_m4 = m4;
+
     dshot_fill_buffer_16(motor1, dshot_prepare_packet(m1));
     dshot_fill_buffer_16(motor2, dshot_prepare_packet(m2));
     dshot_fill_buffer_32(motor3, dshot_prepare_packet(m3));
@@ -151,7 +177,7 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+    HAL_Init();
 
   /* USER CODE BEGIN Init */
 
@@ -278,7 +304,13 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim->Instance == TIM6)
     {
-        flag_process_5ms = 1;
+        // uint8_t tick_count = 0;
+
+        // if (++tick_count >= 3)
+        //{
+        //  tick_count = 0;
+            flag_process_5ms = 1;
+        //}
     }
 }
 /*void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim) {
