@@ -56,7 +56,7 @@ static void LPF_Reset_All(void) {
 
 void FCS_APP_Task(void) {
     // IMU i Barometr -> Simulink
-	float raw_ax = -(float)g_sensors_data.accel_y;
+	float raw_ax =  -(float)g_sensors_data.accel_y;
 	float raw_ay =  (float)g_sensors_data.accel_x;
 	float raw_az = -(float)g_sensors_data.accel_z;
 
@@ -69,7 +69,7 @@ void FCS_APP_Task(void) {
     float raw_gz =  (float)g_sensors_data.gyro_z*0.0174532925f;
 
     FCS_U.pqr_sf[0]   = (real32_T)LPF_Update(&lpf_gyro_p, raw_gx);
-    FCS_U.pqr_sf[1]   = (real32_T)LPF_Update(&lpf_gyro_q, raw_gy);
+    FCS_U.pqr_sf[1]   = -(real32_T)LPF_Update(&lpf_gyro_q, raw_gy);
     FCS_U.pqr_sf[2]   = (real32_T)LPF_Update(&lpf_gyro_r, raw_gz);
 
     FCS_U.pressure_s  = (real32_T)g_sensors_data.pressure_hpa;
@@ -95,10 +95,10 @@ void FCS_APP_Task(void) {
     FCS_U.pos_ref[1]             = 0.0f;
     FCS_U.pos_ref[2]             = 0.0f;
 
-    FCS_U.orient_ref[0] = (real32_T)rx_packet.roll/1000.0;
-    FCS_U.orient_ref[1] = (real32_T)rx_packet.pitch/1000.0f;
-    FCS_U.orient_ref[2] = (real32_T)rx_packet.yaw/1000.0f;
-    //FCS_U.orient_ref[3] = (real32_T)rx_packet.throttle / 1000.0f;
+    FCS_U.orient_ref[0] = (real32_T)rx_packet.roll/100.0;
+    FCS_U.orient_ref[1] = (real32_T)rx_packet.pitch/100.0f;
+    FCS_U.orient_ref[2] = (real32_T)rx_packet.yaw/100.0f;
+    //FCS_U.orient_ref[3] = (real32_T)rx_packet.throttle / 100.0f;
     FCS_U.orient_ref[3] = rx_packet.potValue/100.0f;
 
     uint32_t current_tick      = HAL_GetTick();
@@ -173,34 +173,32 @@ void App_StateMachine(void) {
                         }
 
             // Etap 2: Aktywny lot - Simulink
-
+                FCS_APP_Task();
                 FCS_step();
-                dshot_write(100, 100, 100, 100);
+             // dshot_write(100,0, 100, 0);
 
        /*      static float m1, m2, m3, m4;
                 m1 =  FCS_Y.FCSb[0]*0.5f;
                 m2 =  FCS_Y.FCSb[1]*0.5f;
                 m3 =  FCS_Y.FCSb[2]*0.5f;
                 m4 =  FCS_Y.FCSb[3]*0.5f;*/
-
-      /*    m1 = (real32_T)rx_packet.potValue;
+/*
+            static float m1, m2, m3, m4;
+            m1 = (real32_T)rx_packet.potValue;
             m2 = (real32_T)rx_packet.potValue;
             m3 = (real32_T)rx_packet.potValue;
             m4 = (real32_T)rx_packet.potValue;
 
-                	dshot_write(
-                    fcs_to_dshot(m1),
-                    fcs_to_dshot(m2),
-                    fcs_to_dshot(m3),
-                    fcs_to_dshot(m4)
-                );   */
 
-           /*     dshot_update_all(
-                fcs_to_dshot(FCS_Y.FCSb[0]),
-                fcs_to_dshot(FCS_Y.FCSb[1]),
-                fcs_to_dshot(FCS_Y.FCSb[2]),
-                fcs_to_dshot(FCS_Y.FCSb[3])
-                );*/
+                	dshot_write(m1, m2, m3, m4);
+*/
+
+             dshot_write(
+                    FCS_Y.FCSb[1],
+                    FCS_Y.FCSb[0],
+                    FCS_Y.FCSb[3],
+                    FCS_Y.FCSb[2]
+                );
 
             break;
 
