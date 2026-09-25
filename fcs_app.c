@@ -29,6 +29,13 @@ typedef struct {
     float alpha;
 } LPF_Filter_t;
 
+static inline float Apply_Deadband(float value, float threshold) {
+    if (fabsf(value) < threshold) {
+        return 0.0f;
+    }
+    return value;
+}
+
 // Funkcja aktualizacji filtru
 static inline float LPF_Update(LPF_Filter_t *filter, float input) {
     filter->state += filter->alpha * (input - filter->state);
@@ -60,17 +67,29 @@ void FCS_APP_Task(void) {
 	float raw_ay =  (float)g_sensors_data.accel_x;
 	float raw_az = -(float)g_sensors_data.accel_z;
 
+	#define ACCEL_DEADBAND_RADS  0.03f
+
+
     FCS_U.axayaz_s[0] = (real32_T)LPF_Update(&lpf_accel_x, raw_ax)*9.81f;
 	FCS_U.axayaz_s[1] = (real32_T)LPF_Update(&lpf_accel_y, raw_ay)*9.81f;
 	FCS_U.axayaz_s[2] = (real32_T)LPF_Update(&lpf_accel_z, raw_az)*9.81f;//w spocz
+
+/*
+
+	FCS_U.axayaz_s[0]   = (real32_T)Apply_Deadband(LPF_Update(&lpf_accel_x, raw_ax)*9.81f,  ACCEL_DEADBAND_RADS);
+	FCS_U.axayaz_s[1]   = (real32_T)Apply_Deadband(LPF_Update(&lpf_accel_y, raw_ay)*9.81f,  ACCEL_DEADBAND_RADS);
+	FCS_U.axayaz_s[2]   = (real32_T)Apply_Deadband(LPF_Update(&lpf_accel_z, raw_az)*9.81f,  ACCEL_DEADBAND_RADS);
+*/
 
 	float raw_gx =  (float)g_sensors_data.gyro_y*0.0174532925f;  // deg/s --> rad/s
     float raw_gy =  (float)g_sensors_data.gyro_x*0.0174532925f;
     float raw_gz =  (float)g_sensors_data.gyro_z*0.0174532925f;
 
-    FCS_U.pqr_sf[0]   = (real32_T)LPF_Update(&lpf_gyro_p, raw_gx);
-    FCS_U.pqr_sf[1]   = -(real32_T)LPF_Update(&lpf_gyro_q, raw_gy);
-    FCS_U.pqr_sf[2]   = (real32_T)LPF_Update(&lpf_gyro_r, raw_gz);
+	#define GYRO_DEADBAND_RADS  0.015f
+
+    FCS_U.pqr_sf[0]   = (real32_T)Apply_Deadband( LPF_Update(&lpf_gyro_p, raw_gx),  GYRO_DEADBAND_RADS);
+    FCS_U.pqr_sf[1]   = (real32_T)Apply_Deadband(-LPF_Update(&lpf_gyro_q, raw_gy),  GYRO_DEADBAND_RADS);
+    FCS_U.pqr_sf[2]   = (real32_T)Apply_Deadband( LPF_Update(&lpf_gyro_r, raw_gz),  GYRO_DEADBAND_RADS);
 
     FCS_U.pressure_s  = (real32_T)g_sensors_data.pressure_hpa;
     FCS_U.temp_s      = (real32_T)g_sensors_data.temp_c;
@@ -96,7 +115,7 @@ void FCS_APP_Task(void) {
     FCS_U.pos_ref[2]             = 0.0f;
 
     FCS_U.orient_ref[0] = (real32_T)rx_packet.roll/100.0;
-    FCS_U.orient_ref[1] = (real32_T)rx_packet.pitch/100.0f;
+    FCS_U.orient_ref[1] = -(real32_T)rx_packet.pitch/100.0f;
     FCS_U.orient_ref[2] = (real32_T)rx_packet.yaw/100.0f;
     //FCS_U.orient_ref[3] = (real32_T)rx_packet.throttle / 100.0f;
     FCS_U.orient_ref[3] = rx_packet.potValue/100.0f;
@@ -175,7 +194,7 @@ void App_StateMachine(void) {
             // Etap 2: Aktywny lot - Simulink
                 FCS_APP_Task();
                 FCS_step();
-             // dshot_write(100,0, 100, 0);
+            // dshot_write(50,200, 100, 0);
 
        /*      static float m1, m2, m3, m4;
                 m1 =  FCS_Y.FCSb[0]*0.5f;
@@ -194,9 +213,9 @@ void App_StateMachine(void) {
 */
 
              dshot_write(
-                    FCS_Y.FCSb[1],
                     FCS_Y.FCSb[0],
                     FCS_Y.FCSb[3],
+                    FCS_Y.FCSb[1],
                     FCS_Y.FCSb[2]
                 );
 
