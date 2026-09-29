@@ -8,6 +8,7 @@ typedef struct __attribute__((packed)) {
     int16_t  yaw;        // Odchylenie (-500 do 500)
     int8_t   kill;       // 0 = OFF, 1 = AKTYWNY
     int8_t   Mode;        // 0 = OFF, 1 = AKTYWNY  
+    int16_t  potValue;  // potencjometr
     uint8_t  checksum;   // Suma kontrolna XOR
 } LoRa_ControlPacket_t;
 
@@ -21,6 +22,7 @@ const int PIN_VRY_2 = 35; // Roll (ADC1)
 const int PIN_SW_2  = 26; // Przycisk Joy 2
 
 const int PIN_KS    = 27; // Kill Switch
+const int PIN_POT   = 13; //potencjometr
 
 // --- KALIBRACJA PUNKTÓW ŚRODKOWYCH ---
 const int MID_THR   = 1894;
@@ -92,6 +94,7 @@ void setup() {
     pinMode(PIN_SW_1, INPUT_PULLUP);
     pinMode(PIN_SW_2, INPUT_PULLUP);
     pinMode(PIN_KS, INPUT_PULLUP);
+    pinMode(PIN_POT, INPUT);
 
     // 1. Najpierw konfiguracja magistrali SPI i pinów LoRa
     SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
@@ -120,7 +123,7 @@ void loop() {
     int raw_yaw   = analogRead(PIN_VRY_1);
     int raw_pitch = analogRead(PIN_VRX_2);
     int raw_roll  = analogRead(PIN_VRY_2);
-
+    int raw_pot   = analogRead(PIN_POT);
     int ks = (digitalRead(PIN_KS) == LOW) ? 1 : 0;
 
     // 2. Przeliczenie wszystkich osi na zakres [-100, 100] z zerem na środku
@@ -128,6 +131,7 @@ void loop() {
     int val_yaw   = skalujOsDo100(raw_yaw,   0, MID_YAW,   4095, 50);
     int val_pitch = skalujOsDo100(raw_pitch, 0, MID_PITCH, 4095, 50);
     int val_roll  = skalujOsDo100(raw_roll,  0, MID_ROLL,  4095, 50);
+    int val_pot   = map(raw_pot, 0, 4095, -200, 800);
 
     // 3. Automatyczne wykrywanie trybu Mode:
     // Jeśli wszystkie 4 osie są w strefie martwej (równe 0), załącz Mode = 1 (Zwis)
@@ -150,6 +154,7 @@ void loop() {
     packet.yaw      = val_yaw;
     packet.kill     = ks;
     packet.Mode     = Mode;
+    packet.potValue = val_pot;
     packet.checksum = calculateChecksum(&packet);
 
     // 5. Transmisja LoRa
@@ -157,8 +162,8 @@ void loop() {
     LoRa.write((uint8_t*)&packet, sizeof(LoRa_ControlPacket_t));
     LoRa.endPacket();
 
-    Serial.printf("Wyslano -> Thr: %4d | Yaw: %4d | Pitch: %4d | Roll: %4d | Kill: %d | Mode: %d | CRC: 0x%02X\n",
-                  packet.throttle, packet.yaw, packet.pitch, packet.roll, packet.kill, packet.Mode, packet.checksum);
+    Serial.printf("Wyslano -> Thr: %4d | Yaw: %4d | Pitch: %4d | Roll: %4d | Pot: %3d | Kill: %d | Mode: %d | CRC: 0x%02X\n",
+                  packet.throttle, packet.yaw, packet.pitch, packet.roll, packet.potValue, packet.kill, packet.Mode, packet.checksum);
 
     delay(50); // 20 Hz
 }
