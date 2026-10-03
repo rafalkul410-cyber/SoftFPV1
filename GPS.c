@@ -1,7 +1,7 @@
 #include "GPS.h"
 #include <string.h>
 #include <stdlib.h>
-
+## Aktualizacja: test filtracji i poprawek NMEA.
 GPS_Data_t g_gps_data = {0};
 
 static UART_HandleTypeDef *gps_uart;
