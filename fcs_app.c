@@ -81,7 +81,7 @@ void FCS_APP_Task(void) {
 	FCS_U.axayaz_s[2]   = (real32_T)Apply_Deadband(LPF_Update(&lpf_accel_z, raw_az)*9.81f,  ACCEL_DEADBAND_RADS);
 */
 
-	float raw_gx =  (float)g_sensors_data.gyro_y*0.0174532925f;  // deg/s --> rad/s
+	float raw_gx =  -(float)g_sensors_data.gyro_y*0.0174532925f;  // deg/s --> rad/s
     float raw_gy =  (float)g_sensors_data.gyro_x*0.0174532925f;
     float raw_gz =  (float)g_sensors_data.gyro_z*0.0174532925f;
 
@@ -91,14 +91,18 @@ void FCS_APP_Task(void) {
     FCS_U.pqr_sf[1]   = (real32_T)Apply_Deadband(-LPF_Update(&lpf_gyro_q, raw_gy),  GYRO_DEADBAND_RADS);
     FCS_U.pqr_sf[2]   = (real32_T)Apply_Deadband( LPF_Update(&lpf_gyro_r, raw_gz),  GYRO_DEADBAND_RADS);
 
-    FCS_U.pressure_s  = (real32_T)g_sensors_data.pressure_hpa;
-    FCS_U.temp_s      = (real32_T)g_sensors_data.temp_c;
 
-    if (FCS_U.pressure_s > 100.0f) {
-        FCS_U.altitude_s = 44330.0f * (1.0f - powf(FCS_U.pressure_s / 1013.25f, 0.190295f));
+    if (g_gps_data.home_set && g_gps_data.fix_valid) {
+        FCS_U.GPS_s[0] = g_gps_data.pos_north_m; // Oś X [m]
+        FCS_U.GPS_s[1] = g_gps_data.pos_east_m;  // Oś Y [m]
     } else {
-        FCS_U.altitude_s = 0.0f;
+        FCS_U.GPS_s[0] = 0.0f;
+        FCS_U.GPS_s[1] = 0.0f;
     }
+
+    FCS_U.pressure_s = g_sensors_data.pressure_hpa;
+    FCS_U.altitude_s = g_sensors_data.altitude_QFE;
+    FCS_U.temp_s      = (real32_T)g_sensors_data.temp_c;
 
     FCS_U.mxmymz_s[0] = 0.0f;
     FCS_U.mxmymz_s[1] = 0.0f;
@@ -115,10 +119,10 @@ void FCS_APP_Task(void) {
     FCS_U.pos_ref[2]             = 0.0f;
 
     FCS_U.orient_ref[0] = (real32_T)rx_packet.roll/100.0;
-    FCS_U.orient_ref[1] = -(real32_T)rx_packet.pitch/100.0f;
+    FCS_U.orient_ref[1] = (real32_T)rx_packet.pitch/100.0f;
     FCS_U.orient_ref[2] = (real32_T)rx_packet.yaw/100.0f;
     //FCS_U.orient_ref[3] = (real32_T)rx_packet.throttle / 100.0f;
-    FCS_U.orient_ref[3] = rx_packet.potValue/100.0f;
+    FCS_U.orient_ref[3] = rx_packet.potValue/100.0f; //moc z potencjometru
 
     uint32_t current_tick      = HAL_GetTick();
     FCS_U.timestamp_ms           = (real32_T)current_tick;
